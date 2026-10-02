@@ -87,10 +87,14 @@
       <div class="toolbar">
         <div class="breadcrumb" id="breadcrumb"></div>
         <button class="btn" id="upload-btn" title="Загрузить файлы">⬆ <span class="btn-label">Загрузить</span></button>
+        <button class="btn" id="upload-folder-btn" title="Загрузить папку целиком (с подпапками)">🗂 <span class="btn-label">Папку</span></button>
         <button class="btn" id="mkdir-btn" title="Создать папку">📁 <span class="btn-label">Новая папка</span></button>
         <button class="btn icon" id="view-btn" title="Вид: список / плитка">▦</button>
         <button class="btn icon" id="refresh-btn" title="Обновить">⟳</button>
         <input type="file" id="file-input" multiple class="hidden">
+        <!-- webkitdirectory turns this into the OS folder picker: the browser
+             then sends every file with its path inside the chosen folder. -->
+        <input type="file" id="folder-input" webkitdirectory directory multiple class="hidden">
       </div>
 
       <div class="content">
@@ -102,7 +106,13 @@
   </div>
 
   <div id="modal-root"></div>
-  <div class="toasts" id="toasts"></div>
+
+  <!-- Bottom-right corner: the upload panel sits above the toasts, so progress
+       stays visible while a batch is being sent (see the uploader in app.js). -->
+  <div class="corner">
+    <div class="uploads" id="uploads"></div>
+    <div class="toasts" id="toasts"></div>
+  </div>
 
   <script src="/static/viewer.js"></script>
   <script src="/static/app.js"></script>

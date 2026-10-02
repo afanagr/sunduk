@@ -11,15 +11,16 @@ import logging
 import os
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel
 
-from . import storage
+from . import archive, storage
 from .common import (
     RateLimitMiddleware,
     SecurityHeadersMiddleware,
+    attachment_headers,
     file_response,
     install_exception_handlers,
     preview_size_limit_hit,
@@ -200,5 +201,34 @@ def _register_routes(app: FastAPI, config: AppConfig) -> None:
     @app.get("/api/share/{token}/raw")
     async def share_raw(request: Request, token: str, path: str = "") -> FileResponse:
         return _serve(request, token, path, inline=True)
+
+    @app.get("/api/share/{token}/archive")
+    async def share_archive(request: Request, token: str, path: str = "") -> StreamingResponse:
+        """The shared folder — or any folder inside it — as one ZIP download.
+
+        The archive is produced while it is sent (see :mod:`app.archive`), so a
+        folder of movies costs no disk space and no waiting time before the
+        download starts.
+        """
+        link = _load_link(request, token)
+        directory = _directory_for(request, link)
+        if not link["is_dir"]:
+            raise HTTPException(status_code=404, detail="Not found")
+        if link["password_hash"] and not _is_unlocked(request, link):
+            raise HTTPException(status_code=401, detail="Password required")
+        subroot = resolve_within(directory.root, str(link["rel_path"]))
+        folder = resolve_within(subroot, path)
+        if not os.path.isdir(folder):
+            raise HTTPException(status_code=404, detail="Not found")
+        # One archive is one download: it counts against the link limit exactly
+        # like a file does.
+        request.app.state.shares.register_download(str(link["id"]))
+        log.info("share archive id=%s path=%s ip=%s",
+                 link["id"], path, client_ip(request, config.trusted_proxies))
+        return StreamingResponse(
+            archive.stream(folder),
+            media_type="application/zip",
+            headers=attachment_headers(archive.archive_name(folder, str(link["name"]))),
+        )
 
 

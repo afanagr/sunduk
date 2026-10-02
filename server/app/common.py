@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import mimetypes
 import os
-from typing import List, Optional
+from typing import Dict, List, Optional
 from urllib.parse import quote
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -191,6 +191,18 @@ def _content_disposition(filename: str, inline: bool) -> str:
     ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "download"
     ascii_fallback = ascii_fallback.replace('"', "")
     return f"{disposition}; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quote(filename)}"
+
+
+def attachment_headers(filename: str) -> Dict[str, str]:
+    """Headers for a generated download (an archive built while it streams).
+
+    It is never inline — there is nothing to render — and never cached.
+    """
+    return {
+        "Content-Disposition": _content_disposition(os.path.basename(filename) or "download", False),
+        "Cache-Control": "private, no-store",
+        "X-Content-Type-Options": "nosniff",
+    }
 
 
 def file_response(path: str, download_name: str, *, inline: bool = False) -> FileResponse:

@@ -12,7 +12,7 @@ import shutil
 from typing import Dict, List
 
 from .config import Directory
-from .security import resolve_within
+from .security import resolve_within, split_rel_path
 
 # Extension -> logical kind (used by the frontend for icons / previews).
 _KIND_BY_EXT = {
@@ -103,6 +103,20 @@ def create_dir(directory: Directory, rel: str, name: str) -> None:
         raise NotADirectoryError("parent is not a directory")
     target = resolve_within(directory.root, os.path.join(rel.strip("/"), _safe_name(name)))
     os.mkdir(target)
+
+
+def create_dir_tree(directory: Directory, rel: str, name: str) -> None:
+    """Create a folder with its missing parents, like ``mkdir -p``.
+
+    Folder uploads create their sub-folders per file, so the only folders that
+    need an explicit request are the *empty* ones (they contain no file that
+    could have created them).  ``name`` may therefore carry a whole relative
+    path and is idempotent: an existing folder is not an error.
+    """
+    parts = split_rel_path(f"{(rel or '').strip('/')}/{name}")
+    if not parts:
+        raise ValueError("empty folder name")
+    os.makedirs(resolve_within(directory.root, "/".join(parts)), exist_ok=True)
 
 
 def rename(directory: Directory, rel: str, new_name: str) -> None:

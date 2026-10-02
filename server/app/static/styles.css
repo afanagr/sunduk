@@ -195,6 +195,9 @@ button, input, select { font-family: inherit; font-size: 14px; }
 .file-table tbody tr { cursor: default; }
 .file-table tbody tr:hover { background: var(--panel); }
 .file-table tbody tr.selected { background: rgba(91, 140, 255, .12); }
+/* A folder row is a drop target: files dragged over it are uploaded into it. */
+.file-table tbody tr.drop-target { background: rgba(91, 140, 255, .14); }
+.file-table tbody tr.drop-target td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
 .file-name { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .file-name .ico { font-size: 18px; width: 22px; text-align: center; flex: none; }
 .file-name .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -241,6 +244,46 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
 .toast .t-title { font-weight: 600; }
 .toast .t-msg { color: var(--muted); font-size: 12px; margin-top: 2px; word-break: break-word; }
 @keyframes slide { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* --------------------------------------------------- corner: uploads + toasts */
+/* One column in the bottom-right corner: the upload panel (a progress row per
+   file) is stacked above the toasts, so neither of them hides the other.  The
+   share page has no panel and keeps the plain fixed .toasts rule above. */
+.corner {
+  position: fixed; right: 18px; bottom: 18px; z-index: 100;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  max-width: calc(100vw - 36px);
+}
+.corner .toasts { position: static; }
+.uploads:empty { display: none; }
+.up-card {
+  width: min(340px, calc(100vw - 36px));
+  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: var(--shadow); overflow: hidden; animation: slide .18s ease;
+}
+.up-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border-soft); }
+.up-head > div { flex: 1; min-width: 0; }
+.up-title { font-weight: 600; }
+.up-sub { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.up-list { max-height: 42vh; overflow: auto; }
+.up-row { padding: 8px 12px; border-bottom: 1px solid var(--border-soft); }
+.up-row:last-child { border-bottom: 0; }
+.up-row-head { display: flex; align-items: baseline; gap: 8px; }
+.up-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+/* Relative folder inside an uploaded tree ("Фото/2024/"), above the bar. */
+.up-dir { color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-pct { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Very long batches draw only a header plus the name of the file in flight. */
+.up-now { padding: 8px 12px 0; color: var(--accent-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.up-more { padding: 8px 12px; color: var(--muted); font-size: 11px; }
+.up-bar { height: 4px; border-radius: 4px; background: var(--panel-2); overflow: hidden; margin: 6px 0 4px; }
+.up-bar > span { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width .2s linear; }
+.up-meta { color: var(--muted); font-size: 11px; word-break: break-word; }
+.up-row.waiting .up-name { color: var(--muted); }
+.up-row.done .up-bar > span { background: var(--ok); }
+.up-row.done .up-pct { color: var(--ok); }
+.up-row.error .up-bar > span { background: var(--danger); }
+.up-row.error .up-pct, .up-row.error .up-meta { color: var(--danger); }
 
 /* -------------------------------------------------------------------- misc */
 .spinner {
@@ -348,6 +391,7 @@ tr:hover .row-actions, tr.selected .row-actions { opacity: 1; }
 .tile .cap { padding: 8px 10px; min-width: 0; }
 .tile .cap .nm { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .cap .sub { color: var(--muted); font-size: 11px; }
+.tile.drop-target { border-color: var(--accent); background: rgba(91, 140, 255, .14); }
 
 /* ------------------------------------------------------ share page media */
 .share-media { max-width: 100%; max-height: 65vh; display: block; margin: 0 auto 16px; border-radius: 10px; background: #000; }

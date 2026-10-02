@@ -72,6 +72,26 @@ def resolve_within(root: str, rel: str) -> str:
     return candidate
 
 
+def split_rel_path(rel: str) -> List[str]:
+    """Split a client-supplied relative path into safe segments.
+
+    Folder uploads send the path of a file *inside* the dropped or selected
+    folder (``Фото/2024/кот.jpg``), so a single name can carry sub-folders.
+    Empty and ``.`` segments are dropped; ``..`` is refused outright instead of
+    being silently rewritten.  The result is still resolved through
+    :func:`resolve_within` by the caller — this only normalises the input.
+    """
+    segments: List[str] = []
+    for raw in (rel or "").replace("\\", "/").split("/"):
+        segment = raw.strip()
+        if segment in ("", "."):
+            continue
+        if segment == ".." or "\x00" in segment:
+            raise ValueError("invalid name")
+        segments.append(segment)
+    return segments
+
+
 def is_within(root: str, target: str) -> bool:
     root_real = os.path.realpath(root)
     target_real = os.path.realpath(target)

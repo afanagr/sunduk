@@ -13,16 +13,21 @@ server is touched, and the exit code is 1 as soon as one check fails.
 Covered: health, login with CSRF, the forced first-login password change and the
 428 gate it leaves behind, adding/renaming/removing directories (with the host
 folder picker and every path validation), listing, search, the full write cycle
-(mkdir, upload, rename, move, copy, delete), path-traversal containment, media
+(mkdir, upload, rename, move, copy, delete), folder uploads (a relative path in
+the uploaded name recreating the tree, empty sub-folders, path-traversal
+containment of both), media
 preview (inline MIME types, PDF framing, HTTP Range streaming, HTML forced to
 download), external links (file, folder, password, download limit, plaintext
 password for the admin), the public page (metadata, download, raw, unlock,
-range) and revocation.  Optional: --big-mb N uploads a file larger than N MB.
+range), the shared folder as a ZIP archive (signature, entries, contents,
+password gate, path confinement) and revocation.  Optional: --big-mb N uploads
+a file larger than N MB.
 """
 from __future__ import annotations
 
 import argparse
 import http.cookiejar
+import io
 import json
 import os
 import shutil
@@ -30,6 +35,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 
 import yaml
 
@@ -70,6 +76,33 @@ def payload(body):
         return json.loads(body.decode("utf-8") or "{}")
     except (ValueError, UnicodeDecodeError):
         return {}
+
+
+def archive_names(content):
+    """Entry names of a ZIP body — the test plays the browser here."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            return archive.namelist()
+    except zipfile.BadZipFile:
+        return []
+
+
+def archive_read(content, name):
+    """Bytes of one entry (empty when it is missing or the ZIP is broken)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            return archive.read(name)
+    except (zipfile.BadZipFile, KeyError):
+        return b""
+
+
+def archive_mode(content, name):
+    """Unix mode stored for one entry (0 when it is missing)."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            return archive.getinfo(name).external_attr >> 16
+    except (zipfile.BadZipFile, KeyError):
+        return 0
 
 
 def load_settings():
@@ -478,6 +511,85 @@ def test_browsing_and_writes(admin, alpha, beta):
 
 
 # ---------------------------------------------------------------------------
+# Folder upload: the name of an uploaded file may carry its path inside the
+# dropped/picked folder, so the whole tree is recreated on the server
+# ---------------------------------------------------------------------------
+FOLDER_DIR = "SmokeFolder"
+FOLDER_REL = "Фото/2024/кот.jpg"
+FOLDER_BYTES = b"\xff\xd8\xff\xe0 folder upload payload\n"
+FOLDER_EMPTY = "Фото/Пусто/Глубоко"
+
+
+def test_folder_upload(admin, alpha):
+    a = alpha["id"]
+    status, _, _ = admin.post_json("/api/mkdir", {"directory": a, "path": "", "name": FOLDER_DIR})
+    check("папка: каталог для загрузки создан", status == 200, f"status={status}")
+
+    # The browser sends "Фото/2024/кот.jpg" as the file name; every folder on the
+    # way has to appear by itself (non-ascii names included).
+    status, _, body = admin.post_multipart(
+        "/api/upload", {"directory": a, "path": FOLDER_DIR}, "files", FOLDER_REL, FOLDER_BYTES,
+    )
+    data = payload(body)
+    check("папка: вложенный файл принят",
+          status == 200 and FOLDER_REL in data.get("uploaded", []), f"status={status} {data}")
+
+    quoted = urllib.parse.quote(f"{FOLDER_DIR}/Фото/2024", safe="/")
+    status, _, body = admin.get(f"/api/list?directory={a}&path={quoted}")
+    names = [e["name"] for e in payload(body).get("entries", [])]
+    check("папка: дерево воссоздано", status == 200 and names == ["кот.jpg"], f"entries={names}")
+
+    status, _, content = admin.get(
+        f"/api/download?directory={a}&path=" + urllib.parse.quote(f"{FOLDER_DIR}/{FOLDER_REL}", safe="/")
+    )
+    check("папка: вложенный файл скачивается", status == 200 and content == FOLDER_BYTES,
+          f"status={status} len={len(content)}")
+
+    # Nothing may climb out of the target folder, and a refused name leaves no
+    # trace anywhere (neither above nor inside the target).
+    for probe in ("../escape.txt", "Фото/../../escape.txt", ".."):
+        status, _, body = admin.post_multipart(
+            "/api/upload", {"directory": a, "path": FOLDER_DIR}, "files", probe, b"nope\n",
+        )
+        check(f"папка: имя «{probe}» отклонено", status == 400, f"status={status} {payload(body)}")
+
+    status, _, body = admin.get(f"/api/list?directory={a}&path=")
+    names = [e["name"] for e in payload(body).get("entries", [])]
+    check("папка: обход не создал ничего снаружи", "escape.txt" not in names, f"entries={names}")
+    status, _, body = admin.get(f"/api/list?directory={a}&path=" + urllib.parse.quote(FOLDER_DIR, safe="/"))
+    names = [e["name"] for e in payload(body).get("entries", [])]
+    check("папка: обход не создал ничего внутри", "escape.txt" not in names and names == ["Фото"],
+          f"entries={names}")
+
+    # Empty folders of a dropped tree are created explicitly ("mkdir -p"), and
+    # repeating the request is harmless.
+    for attempt in (1, 2):
+        status, _, _ = admin.post_json(
+            "/api/mkdir", {"directory": a, "path": "", "name": f"{FOLDER_DIR}/{FOLDER_EMPTY}", "parents": True}
+        )
+        check(f"папка: пустые папки деревом (попытка {attempt})", status == 200, f"status={status}")
+
+    status, _, body = admin.get(
+        f"/api/list?directory={a}&path=" + urllib.parse.quote(f"{FOLDER_DIR}/Фото/Пусто", safe="/")
+    )
+    names = [e["name"] for e in payload(body).get("entries", [])]
+    check("папка: пустая вложенная папка видна", names == ["Глубоко"], f"entries={names}")
+
+    status, _, _ = admin.post_json(
+        "/api/mkdir", {"directory": a, "path": "", "name": f"{FOLDER_DIR}/Один/Два"}
+    )
+    check("папка: обычное создание папки осталось одноуровневым", status == 400, f"status={status}")
+
+    status, _, _ = admin.post_json(
+        "/api/mkdir", {"directory": a, "path": "", "name": "../../escape", "parents": True}
+    )
+    check("папка: создание дерева не выходит из каталога", status == 400, f"status={status}")
+
+    status, _, _ = admin.post_json("/api/delete", {"directory": a, "path": FOLDER_DIR})
+    check("папка: дерево удалено", status == 200, f"status={status}")
+
+
+# ---------------------------------------------------------------------------
 # Media preview & streaming
 # ---------------------------------------------------------------------------
 MEDIA_DIR = "SmokeMedia"
@@ -736,6 +848,100 @@ def test_links_public(admin, file_token, folder_token, inline_token):
 
 
 # ---------------------------------------------------------------------------
+# A shared folder as one ZIP archive
+# ---------------------------------------------------------------------------
+ARCHIVE_DIR = "Архив"          # non-ascii names have to survive the round trip
+EMPTY_DIR = "пусто"
+
+
+def test_archive(admin, alpha):
+    """The folder link hands out the whole folder (or a subfolder) as a ZIP.
+
+    The archive is built while it is sent, so the test reads it back with
+    ``zipfile`` exactly like a browser would: signature, entries, bytes.
+    """
+    a = alpha["id"]
+    status, _, body = admin.post_json(
+        "/api/share/create", {"directory": a, "path": "", "expiry_hours": 2}
+    )
+    token = (payload(body).get("url") or "").rsplit("/s/", 1)[-1]
+    check("подготовлена ссылка на папку для архива",
+          status == 200 and bool(token), f"status={status}")
+    if not token:
+        return
+
+    # A folder with a non-ascii name holding an empty folder: both have to come
+    # back unchanged (UTF-8 entries; an empty folder is its own ZIP entry).
+    admin.post_json("/api/mkdir", {"directory": a, "path": "", "name": ARCHIVE_DIR})
+    admin.post_json("/api/mkdir", {"directory": a, "path": ARCHIVE_DIR, "name": EMPTY_DIR})
+
+    anon = Client(PUBLIC)
+    status, headers, content = anon.get(f"/api/share/{token}/archive")
+    names = archive_names(content)
+    check("архив папки отдаётся как zip",
+          status == 200 and headers.get("content-type") == "application/zip",
+          f"status={status} type={headers.get('content-type')}")
+    check("архив скачивается как вложение",
+          "attachment" in headers.get("content-disposition", "").lower()
+          and ".zip" in headers.get("content-disposition", ""),
+          headers.get("content-disposition", ""))
+    check("тело ответа — zip-документ", content[:2] == b"PK", str(content[:4]))
+    check("архив содержит файл корня", "alpha/user-note.txt" in names, str(names[:5]))
+    check("архив содержит папку с файлом",
+          f"alpha/{MEDIA_DIR}/{MEDIA_NAME}" in names, str(names[:8]))
+    check("архив содержит не-ascii имена",
+          f"alpha/{ARCHIVE_DIR}/{EMPTY_DIR}/" in names, str(names[-3:]))
+    check("файл внутри архива не повреждён",
+          archive_read(content, f"alpha/{MEDIA_DIR}/{MEDIA_NAME}") == MEDIA_BYTES,
+          f"archive={len(content)} файл={len(MEDIA_BYTES)}")
+    check("архив сохраняет права файлов",
+          bool(archive_mode(content, "alpha/user-note.txt") & 0o400),
+          oct(archive_mode(content, "alpha/user-note.txt")))
+    check("непустой файл в архиве не сжат (медиа хранится как есть)",
+          len(content) >= len(MEDIA_BYTES), f"archive={len(content)}")
+
+    status, headers, content = anon.get(f"/api/share/{token}/archive?path={MEDIA_DIR}")
+    names = archive_names(content)
+    check("архив подпапки содержит только её",
+          status == 200 and bool(names) and all(n.startswith(f"{MEDIA_DIR}/") for n in names),
+          str(names[:4]))
+    check("имя архива — имя папки",
+          f"{MEDIA_DIR}.zip" in headers.get("content-disposition", ""),
+          headers.get("content-disposition", ""))
+    check("файл из подпапки целый",
+          archive_read(content, f"{MEDIA_DIR}/{MKV_NAME}") == MEDIA_BYTES,
+          f"archive={len(content)}")
+
+    status, _, _ = anon.get(
+        f"/api/share/{token}/archive?path=" + urllib.parse.quote("../../../../etc", safe="")
+    )
+    check("архив вне общей папки заблокирован", status in (400, 403, 404), f"status={status}")
+    status, _, _ = anon.get(f"/api/share/{token}/archive?path={MEDIA_NAME}")
+    check("архив файла вместо папки отклонён", status == 404, f"status={status}")
+
+    status, _, body = admin.post_json(
+        "/api/share/create",
+        {"directory": a, "path": f"{MEDIA_DIR}/{MEDIA_NAME}", "expiry_hours": 2},
+    )
+    file_token = (payload(body).get("url") or "").rsplit("/s/", 1)[-1]
+    status, _, _ = anon.get(f"/api/share/{file_token}/archive")
+    check("архив по ссылке на файл отклонён", status == 404, f"status={status}")
+
+    status, _, body = admin.post_json(
+        "/api/share/create",
+        {"directory": a, "path": "", "expiry_hours": 2, "password": SHARE_PASSWORD},
+    )
+    locked = (payload(body).get("url") or "").rsplit("/s/", 1)[-1]
+    status, _, _ = anon.get(f"/api/share/{locked}/archive")
+    check("до ввода пароля архив закрыт", status == 401, f"status={status}")
+    status, _, _ = anon.post_json(f"/api/share/{locked}/unlock", {"password": SHARE_PASSWORD})
+    check("пароль ссылки принят для архива", status == 200, f"status={status}")
+    status, _, content = anon.get(f"/api/share/{locked}/archive")
+    check("архив защищённой папки отдан после пароля",
+          status == 200 and content[:2] == b"PK", f"status={status}")
+
+
+# ---------------------------------------------------------------------------
 # Removing a directory from the panel
 # ---------------------------------------------------------------------------
 def test_directory_removal(admin, alpha, beta):
@@ -821,9 +1027,11 @@ def main():
 
     try:
         test_browsing_and_writes(admin, alpha, beta)
+        test_folder_upload(admin, alpha)
         test_media(admin, alpha)
         file_token, folder_token, inline_token = test_links_admin(admin, alpha)
         test_links_public(admin, file_token, folder_token, inline_token)
+        test_archive(admin, alpha)
         test_directory_removal(admin, alpha, beta)
         beta = None                                    # removed inside the test
     finally:

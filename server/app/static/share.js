@@ -79,6 +79,11 @@
     return `${base}/raw?path=${encodeURIComponent(path || '')}`;
   }
 
+  // One ZIP of the folder (the shared one, or any folder inside it).
+  function archiveUrl(path) {
+    return `${base}/archive?path=${encodeURIComponent(path || '')}`;
+  }
+
   // ------------------------------------------------------------------ rendering
   function renderError(message, detail) {
     $('#subtitle').textContent = 'Недоступно';
@@ -206,12 +211,26 @@
     link.remove();
   }
 
+  // "Download this folder as an archive": the labelled button in the folder
+  // bar, the compact one in a folder row.
+  function archiveButton(path, compact) {
+    const title = 'Скачать папку архивом (ZIP)';
+    const btn = el('button', compact
+      ? { class: 'btn ghost icon', type: 'button', title, text: '🗜' }
+      : { class: 'btn', type: 'button', title }, compact ? null : [
+        el('span', { text: '🗜' }),
+        el('span', { class: 'btn-label', text: 'Архив' }),
+      ]);
+    btn.addEventListener('click', (ev) => { ev.stopPropagation(); triggerDownload(archiveUrl(path)); });
+    return btn;
+  }
+
   function renderDir(entries) {
     state.entries = entries;
     $('#title').textContent = state.info.name;
     $('#subtitle').textContent = entries.length ? `${entries.length} объект(ов) в общей папке` : 'Общая папка';
     const card = el('div', { class: 'card' });
-    card.appendChild(el('div', { class: 'dir-bar' }, [breadcrumb(), viewToggle()]));
+    card.appendChild(el('div', { class: 'dir-bar' }, [breadcrumb(), archiveButton(state.path, false), viewToggle()]));
     if (!entries.length) {
       card.appendChild(el('div', { class: 'empty' }, [
         el('div', { class: 'big', text: '📂' }),
@@ -274,6 +293,8 @@
           }));
         }
         actions.appendChild(el('a', { class: 'btn ghost icon', href: downloadUrl(entry.path), title: 'Скачать', text: '⬇' }));
+      } else {
+        actions.appendChild(archiveButton(entry.path, true));
       }
       tbody.appendChild(el('tr', {}, [
         el('td', {}, [

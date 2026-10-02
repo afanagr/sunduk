@@ -36,7 +36,7 @@ from .common import (
     preview_size_limit_hit,
 )
 from .config import AppConfig, Directory
-from .security import RateLimiter, client_ip, resolve_within
+from .security import RateLimiter, client_ip, resolve_within, split_rel_path
 from .shares import ShareService
 
 log = logging.getLogger("sunduk.admin")
@@ -85,6 +85,9 @@ class PathModel(BaseModel):
 
 class MkdirModel(PathModel):
     name: str
+    # Folder uploads create the whole tree at once: with parents=True the name
+    # may contain '/' and already existing folders are not an error ("mkdir -p").
+    parents: bool = False
 
 
 class RenameModel(PathModel):
@@ -363,10 +366,30 @@ def _register_routes(app: FastAPI, config: AppConfig) -> None:
             raise HTTPException(status_code=400, detail="Target is not a directory")
         saved: List[str] = []
         for upload in files:
-            name = os.path.basename((upload.filename or "").replace("\\", "/")).strip()
-            if not name or name in {".", ".."}:
+            # Folder uploads carry the path inside the dropped/selected folder
+            # ("Фото/2024/кот.jpg") in the file name; plain file uploads carry a
+            # bare name.  Either way the segments are checked and the result is
+            # confined to the exposed directory below.
+            try:
+                parts = split_rel_path(upload.filename)
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Недопустимое имя файла: {upload.filename}",
+                ) from exc
+            if not parts:
                 continue
-            destination = resolve_within(target.root, os.path.join(path.strip("/"), name))
+            name = parts[-1]
+            rel_dir = "/".join(parts[:-1])
+            rel_name = f"{rel_dir}/{name}" if rel_dir else name
+            destination = resolve_within(target.root, os.path.join(path.strip("/"), rel_dir, name))
+            parent_dir = os.path.dirname(destination)
+            try:
+                # The tree of a folder upload arrives file by file, so every file
+                # recreates its own folder (no-op when it already exists).
+                os.makedirs(parent_dir, exist_ok=True)
+            except OSError as exc:
+                raise HTTPException(status_code=500, detail=f"Не удалось создать папку: {exc}") from exc
             tmp = f"{destination}.part-{os.getpid()}-{int(time.time() * 1000)}"
             written = 0
             try:
@@ -384,7 +407,7 @@ def _register_routes(app: FastAPI, config: AppConfig) -> None:
                             )
                         handle.write(chunk)
                 os.replace(tmp, destination)
-                saved.append(name)
+                saved.append(rel_name)
             except HTTPException:
                 if os.path.exists(tmp):
                     os.remove(tmp)
@@ -403,7 +426,10 @@ def _register_routes(app: FastAPI, config: AppConfig) -> None:
         require_csrf(request)
         target = _directory(request, body.directory)
         try:
-            storage.create_dir(target, body.path, body.name)
+            if body.parents:
+                storage.create_dir_tree(target, body.path, body.name)
+            else:
+                storage.create_dir(target, body.path, body.name)
         except REQUEST_ERRORS as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True}

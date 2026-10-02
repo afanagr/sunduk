@@ -452,7 +452,7 @@
     const area = $('#file-area');
     clear(area);
     if (!entries.length) {
-      renderMessage('📂', state.searchMode ? 'Ничего не найдено' : 'Папка пуста — перетащите файлы сюда, чтобы загрузить');
+      renderMessage('📂', state.searchMode ? 'Ничего не найдено' : 'Папка пуста — перетащите файлы или папку сюда, чтобы загрузить');
       return;
     }
     area.appendChild(state.view === 'grid' ? renderGrid(entries) : renderTable(entries));
@@ -480,7 +480,10 @@
   }
 
   function renderTile(entry) {
-    const tile = el('div', { class: 'tile', title: state.searchMode ? entry.path : entry.name });
+    const tile = el('div', Object.assign(
+      { class: 'tile', title: state.searchMode ? entry.path : entry.name },
+      entry.is_dir ? { 'data-drop-path': entry.path } : null,
+    ));
     const thumb = el('div', { class: 'thumb' });
     if (!entry.is_dir && entry.kind === 'image') {
       thumb.appendChild(el('img', { src: fileUrl('/api/preview', entry), alt: '', loading: 'lazy' }));
@@ -539,7 +542,7 @@
       text: metaBits.join(' · '),
     });
 
-    return el('tr', {}, [
+    return el('tr', entry.is_dir ? { 'data-drop-path': entry.path } : null, [
       el('td', {}, [nameWrap, meta]),
       el('td', { class: 'right muted col-size', text: entry.is_dir ? '—' : fmtSize(entry.size) }),
       el('td', { class: 'muted col-date', text: fmtDate(entry.mtime) }),
@@ -960,22 +963,349 @@
   }
 
   // -------------------------------------------------------------------- upload
-  async function uploadFiles(fileList) {
-    const files = Array.prototype.slice.call(fileList || []);
-    if (!files.length) return;
-    if (!state.directory) { toast('err', 'Каталог не выбран', 'Подключите каталог в панели'); return; }
-    const form = new FormData();
-    form.append('directory', state.directory);
-    form.append('path', state.path);
-    files.forEach((file) => form.append('files', file, file.name));
-    toast('info', 'Загрузка…', `${files.length} файл(ов), ${fmtSize(files.reduce((sum, f) => sum + f.size, 0))}`);
-    try {
-      const data = await api('/api/upload', { method: 'POST', body: form });
-      toast('ok', 'Загружено', (data.uploaded || []).join(', ') || 'нет файлов');
-      await loadDir();
-    } catch (err) {
-      toast('err', 'Ошибка загрузки', err.message);
+  // A batch is a list of files that keep their path relative to the folder the
+  // user dropped or picked ("Фото/2024/кот.jpg"), so whole folder trees are
+  // recreated on the server.  One request carries one file; the corner panel
+  // shows a row per file, and only a compact header for very large batches.
+
+  const UP_ROWS = 200;          // per-file rows drawn in the panel
+  const UP_MAX_FILES = 20000;   // sanity cap: files *kept* from one dropped tree
+  const UP_MAX_DEPTH = 32;      // a dropped tree can contain symlink loops
+
+  function joinPath(...parts) {
+    return parts
+      .filter((part) => part !== null && part !== undefined && part !== '')
+      .join('/')
+      .replace(/\/{2,}/g, '/');
+  }
+
+  const leafName = (rel) => rel.slice(rel.lastIndexOf('/') + 1);
+  const dirName = (rel) => (rel.lastIndexOf('/') < 0 ? '' : rel.slice(0, rel.lastIndexOf('/')));
+
+  // "a, b, c и ещё 12" — a folder of 500 files must not fill the screen.
+  function joinList(list, max) {
+    const limit = max || 4;
+    if (list.length <= limit) return list.join(', ');
+    return `${list.slice(0, limit).join(', ')} и ещё ${list.length - limit}`;
+  }
+
+  // rows: [{file, rel, size, loaded, state}].  Every row owns pct/fill/meta
+  // elements, but beyond UP_ROWS they are left detached: the progress is still
+  // counted, only the DOM is spared.
+  function upPanel(rows) {
+    const title = el('div', { class: 'up-title', text: 'Загрузка' });
+    const sub = el('div', { class: 'up-sub', text: 'подготовка…' });
+    const close = el('button', { class: 'btn ghost icon', type: 'button', title: 'Отменить загрузку', text: '✕' });
+    const list = el('div', { class: 'up-list' });
+    const now = rows.length > UP_ROWS ? el('div', { class: 'up-now' }) : null;
+    rows.forEach((row, index) => {
+      // Compact mode: beyond UP_ROWS the file gets no DOM at all — it is still
+      // sent and counted, but only the header reports the batch.
+      if (index >= UP_ROWS) return;
+      row.pct = el('span', { class: 'up-pct', text: '0 %' });
+      row.fill = el('span');
+      row.meta = el('div', { class: 'up-meta', text: fmtSize(row.size) });
+      const dir = dirName(row.rel);
+      row.node = el('div', { class: 'up-row waiting' }, [
+        el('div', { class: 'up-row-head' }, [
+          el('span', { class: 'up-name', title: row.rel, text: leafName(row.rel) }),
+          row.pct,
+        ]),
+        dir ? el('div', { class: 'up-dir', title: dir, text: `${dir}/` }) : null,
+        el('div', { class: 'up-bar' }, [row.fill]),
+        row.meta,
+      ]);
+      list.appendChild(row.node);
+    });
+    if (now) list.appendChild(el('div', { class: 'up-more', text: `… ещё ${rows.length - UP_ROWS} файл(ов)` }));
+    const card = el('div', { class: 'up-card' }, [
+      el('div', { class: 'up-head' }, [el('div', {}, [title, sub]), close]),
+      now,
+      list,
+    ]);
+    const box = $('#uploads') || document.body;
+    clear(box);
+    box.appendChild(card);
+    return { card, title, sub, close, now };
+  }
+
+  function upProgress(row, loaded) {
+    // row.loaded feeds the batch totals even when the row has no DOM (compact mode).
+    row.loaded = loaded;
+    if (!row.pct) return;
+    const ratio = row.size ? Math.min(1, loaded / row.size) : 0;
+    row.pct.textContent = `${Math.round(ratio * 100)} %`;
+    row.fill.setAttribute('style', `width:${(ratio * 100).toFixed(1)}%`);
+  }
+
+  // state: 'done' | 'error' | 'cancelled' — the row keeps its last numbers.
+  function upFinish(row, state, note) {
+    row.state = state;
+    if (state === 'done') row.loaded = row.size;
+    if (row.node) row.node.className = `up-row ${state}`;
+    if (!row.pct) return;
+    row.pct.textContent = state === 'done' ? '100 %' : state === 'cancelled' ? '—' : 'ошибка';
+    if (state === 'done') row.fill.setAttribute('style', 'width:100%');
+    row.meta.textContent = note || fmtSize(row.loaded);
+  }
+
+  // One file = one request: only its own request reports the progress of *this*
+  // file, which is what fills its bar.  `slot` also carries the fixed target
+  // folder and the XHR of the running request, so the batch can be cancelled.
+  function sendOne(row, slot, onProgress) {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      const form = new FormData();
+      form.append('directory', slot.directory);
+      form.append('path', slot.path);
+      // The part name carries the path inside the uploaded folder, so the
+      // server recreates the sub-folders ("Фото/2024/кот.jpg").
+      form.append('files', row.file, row.rel);
+      xhr.open('POST', '/api/upload', true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader('X-CSRF-Token', state.csrf || '');
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) onProgress(ev.loaded);
+      });
+      xhr.addEventListener('load', () => {
+        let detail = '';
+        try { detail = JSON.parse(xhr.responseText || '{}').detail || ''; } catch (err) { /* not json */ }
+        resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, detail });
+      });
+      xhr.addEventListener('error', () => resolve({ ok: false, status: 0, detail: 'Соединение прервано' }));
+      xhr.addEventListener('abort', () => resolve({ ok: false, status: 0, detail: 'Отменено' }));
+      slot.xhr = xhr;
+      xhr.send(form);
+    });
+  }
+
+  // ------------------------------------------------------------------ sources
+  // Files of an <input type=file>.  With webkitdirectory the browser fills
+  // webkitRelativePath with the path inside the picked folder, so the folder
+  // picker needs no extra walking.
+  function collectFromFileList(list) {
+    const files = [];
+    Array.prototype.forEach.call(list || [], (file) => {
+      if (!file) return;
+      files.push({ file, rel: file.webkitRelativePath || file.name });
+    });
+    return { files, dirs: [] };
+  }
+
+  function readEntries(reader) {
+    return new Promise((resolve, reject) => {
+      const all = [];
+      // Chrome hands out at most 100 entries per call, so read until empty.
+      const step = () => reader.readEntries((batch) => {
+        if (!batch.length) { resolve(all); return; }
+        all.push.apply(all, batch);
+        step();
+      }, reject);
+      step();
+    });
+  }
+
+  async function walkEntry(entry, prefix, out, depth) {
+    if (out.files.length + out.dirs.length >= UP_MAX_FILES || depth > UP_MAX_DEPTH) return;
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.files.push({ file, rel: `${prefix}${entry.name}` });
+      return;
     }
+    if (!entry.isDirectory) return;
+    const dir = `${prefix}${entry.name}`;
+    const children = await readEntries(entry.createReader());
+    if (!children.length) { out.dirs.push(dir); return; }     // keep empty folders
+    children.sort((a, b) => a.name.localeCompare(b.name));
+    for (const child of children) await walkEntry(child, `${dir}/`, out, depth + 1);
+  }
+
+  // A dropped folder is only reachable through the entries API (Chrome, Edge,
+  // Firefox, Safari); the plain FileList of a folder drop has no structure.
+  // The entries must be read *synchronously*: the item list dies with the event.
+  async function collectFromDrop(dataTransfer) {
+    const items = Array.prototype.slice.call((dataTransfer && dataTransfer.items) || []);
+    const roots = [];
+    const loose = [];
+    for (const item of items) {
+      if (item.kind !== 'file') continue;
+      let entry = null;
+      try { entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null; } catch (err) { entry = null; }
+      if (entry) roots.push(entry);
+      else {
+        const file = item.getAsFile ? item.getAsFile() : null;
+        if (file) loose.push({ file, rel: file.name });
+      }
+    }
+    if (!roots.length && !loose.length) return collectFromFileList(dataTransfer && dataTransfer.files);
+    const out = { files: loose, dirs: [] };
+    for (const entry of roots) await walkEntry(entry, '', out, 0);
+    return out;
+  }
+
+  // The empty folders of a dropped tree contain no file that could create them,
+  // so they are created explicitly — idempotent, "mkdir -p" on the server.
+  async function createFolders(dirs, location) {
+    const created = [];
+    const failed = [];
+    for (const dir of dirs) {
+      try {
+        await api('/api/mkdir', {
+          method: 'POST',
+          json: { directory: location.directory, path: '', name: joinPath(location.path, dir), parents: true },
+        });
+        created.push(dir);
+      } catch (err) {
+        failed.push(`${dir}: ${err.message}`);
+      }
+    }
+    return { created, failed };
+  }
+
+  // Sends a batch one file at a time and keeps the corner panel up to date.
+  // Sequential on purpose: a home server has a single uplink, so parallel
+  // requests would not finish sooner — every bar would just crawl together.
+  async function uploadBatch(collection, location) {
+    if (!state.directory) { toast('err', 'Каталог не выбран', 'Подключите каталог в панели'); return; }
+    const files = collection.files.slice().sort((a, b) => a.rel.localeCompare(b.rel));
+    const dirs = collection.dirs.slice().sort();
+    const folders = dirs.length ? await createFolders(dirs, location) : { created: [], failed: [] };
+    // The whole batch targets the folder that was open when it started, even if
+    // the user walks away while a long upload is still running.
+    const target = `${location.directory}|${location.path}`;
+    if (!files.length) {
+      // A dropped tree can hold nothing but empty folders.
+      if (folders.created.length) {
+        toast('ok', 'Папки созданы', joinList(folders.created));
+        if (target === `${state.directory}|${state.path}`) await loadDir();
+      } else {
+        toast('err', 'Нечего загружать', folders.failed.length ? joinList(folders.failed, 2) : 'Файлы не найдены');
+      }
+      return;
+    }
+
+    const rows = files.map((item) => ({
+      file: item.file, rel: item.rel, size: item.file.size, loaded: 0, state: 'waiting',
+    }));
+    const total = rows.reduce((sum, row) => sum + row.size, 0);
+    const panel = upPanel(rows);
+    const slot = { xhr: null, cancelled: false, directory: location.directory, path: location.path };
+    const uploaded = [];
+    const errors = folders.failed.slice();
+    let speed = 0;
+    let mark = Date.now();
+    let marked = 0;
+    let running = true;
+
+    // Bytes of every row so far — the file in flight counts with what has
+    // already reached the server, so the header moves with its bar.
+    const bytesSent = () => rows.reduce((sum, row) => sum + row.loaded, 0);
+
+    const summary = () => {
+      // Cancelled rows are finished too: the counter must reach the total.
+      const finished = rows.filter((row) => row.state !== 'waiting' && row.state !== 'running').length;
+      const live = bytesSent();
+      const ratio = total ? live / total : 0;
+      panel.title.textContent = `Загрузка: ${finished} из ${rows.length}`;
+      panel.sub.textContent = `${Math.round(ratio * 100)} % · ${fmtSize(live)} из ${fmtSize(total)}`
+        + (speed ? ` · ${fmtSize(speed)}/с` : '');
+    };
+    summary();
+
+    const closePanel = () => { if (panel.card.parentNode) panel.card.remove(); };
+    panel.close.addEventListener('click', () => {
+      if (!running) { closePanel(); return; }
+      slot.cancelled = true;
+      if (slot.xhr) slot.xhr.abort();
+    });
+
+    for (const row of rows) {
+      if (slot.cancelled) { upFinish(row, 'cancelled', 'отменено'); continue; }
+      row.state = 'running';
+      if (row.node) row.node.className = 'up-row';
+      if (panel.now) panel.now.textContent = row.rel;
+      const result = await sendOne(row, slot, (loaded) => {
+        upProgress(row, loaded);
+        const now = Date.now();
+        const live = bytesSent();
+        const span = (now - mark) / 1000;
+        if (span >= 0.5) {                       // one smoothed sample per 0.5 s
+          const instant = (live - marked) / span;
+          speed = speed ? speed * 0.6 + instant * 0.4 : instant;
+          mark = now;
+          marked = live;
+        }
+        summary();
+      });
+
+      if (result.ok) {
+        upFinish(row, 'done');
+        uploaded.push(row.rel);
+      } else if (slot.cancelled) {
+        upFinish(row, 'cancelled', 'отменено');
+      } else {
+        const note = result.detail || `не удалось загрузить (${result.status || 'нет связи'})`;
+        upFinish(row, 'error', note);
+        errors.push(`${row.rel}: ${note}`);
+        // 401/428 are session problems: stop the batch instead of failing on
+        // every remaining file.  The login screen / password dialog is opened
+        // here, because this path does not go through api().
+        if (result.status === 401) { showLogin('Сессия истекла — войдите заново'); slot.cancelled = true; }
+        if (result.status === 428) { state.mustChange = true; openPasswordDialog(true); slot.cancelled = true; }
+      }
+      summary();
+    }
+
+    running = false;
+    const failed = rows.filter((row) => row.state === 'error').length;
+    const stopped = rows.filter((row) => row.state === 'cancelled').length;
+    panel.close.setAttribute('title', 'Закрыть');
+    const folderNote = folders.created.length ? ` · папок: ${folders.created.length}` : '';
+    if (failed) {
+      panel.title.textContent = 'Загрузка завершена с ошибками';
+      panel.sub.textContent = `${uploaded.length} из ${rows.length} файлов загружено${folderNote}`;
+    } else if (stopped) {
+      panel.title.textContent = stopped === rows.length ? 'Загрузка отменена' : 'Загрузка отменена частично';
+      panel.sub.textContent = `${uploaded.length} из ${rows.length} файлов загружено`;
+    } else {
+      panel.title.textContent = 'Загрузка завершена';
+      panel.sub.textContent = `${rows.length} файл(ов) · ${fmtSize(total)}${folderNote}`;
+    }
+
+    if (errors.length) toast('err', 'Ошибка загрузки', joinList(errors, 2));
+    if (uploaded.length) {
+      toast('ok', 'Загружено', joinList(uploaded));
+      // Only refresh when the upload landed where the user still is.
+      if (target === `${state.directory}|${state.path}`) await loadDir();
+    }
+    // Nothing to read when everything went through; a failure stays on screen.
+    if (!failed) setTimeout(closePanel, stopped ? 4000 : 6000);
+  }
+
+  // Files chosen through the "Загрузить" / "Папку" dialogs.
+  function uploadFiles(fileList) {
+    const collection = collectFromFileList(fileList);
+    if (!collection.files.length) return;
+    return uploadBatch(collection, { directory: state.directory, path: state.path });
+  }
+
+  // A drop can be files, folders or a mix.  `dropPath` is the folder under the
+  // cursor when it was one of the listed folders, otherwise the open one.
+  async function uploadDrop(dataTransfer, dropPath) {
+    if (!state.directory) { toast('err', 'Каталог не выбран', 'Подключите каталог в панели'); return; }
+    const location = { directory: state.directory, path: dropPath === undefined ? state.path : dropPath };
+    let collection;
+    try {
+      collection = await collectFromDrop(dataTransfer);
+    } catch (err) {
+      toast('err', 'Не удалось прочитать перетаскиваемое', err && err.message);
+      return;
+    }
+    if (!collection.files.length && !collection.dirs.length) {
+      toast('info', 'Ничего не перетащено', 'Перетащите файлы или папки из проводника');
+      return;
+    }
+    await uploadBatch(collection, location);
   }
 
   // -------------------------------------------------------------------- search
@@ -1296,22 +1626,54 @@
       if (ev.key === 'Escape' && $('#main-view').classList.contains('nav-open')) setNav(false);
     });
 
-    const input = $('#file-input');
-    $('#upload-btn').addEventListener('click', () => input.click());
-    input.addEventListener('change', () => { uploadFiles(input.files); input.value = ''; });
+    const filesInput = $('#file-input');
+    $('#upload-btn').addEventListener('click', () => filesInput.click());
+    filesInput.addEventListener('change', () => { uploadFiles(filesInput.files); filesInput.value = ''; });
 
+    // The OS folder picker: the input is a directory input, so each File already
+    // carries its path inside the chosen folder (webkitRelativePath).
+    const folderInput = $('#folder-input');
+    $('#upload-folder-btn').addEventListener('click', () => folderInput.click());
+    folderInput.addEventListener('change', () => { uploadFiles(folderInput.files); folderInput.value = ''; });
+
+    wireDrop();
+  }
+
+  // Dropping works anywhere in the window — a folder is dropped on the window,
+  // not on a specific element — and it lands in the folder under the cursor
+  // when that folder is one of the listed ones (see data-drop-path below).
+  function wireDrop() {
     const zone = $('#dropzone');
-    ['dragenter', 'dragover'].forEach((name) => zone.addEventListener(name, (ev) => {
+    let over = null;
+    const hasFiles = (ev) => Boolean(ev.dataTransfer)
+      && Array.prototype.indexOf.call(ev.dataTransfer.types || [], 'Files') >= 0;
+    const folderUnder = (ev) => (ev.target && ev.target.closest ? ev.target.closest('[data-drop-path]') : null);
+    const markRow = (node) => {
+      if (over === node) return;
+      if (over) over.classList.remove('drop-target');
+      over = node;
+      if (over) over.classList.add('drop-target');
+    };
+    const clear = () => { markRow(null); zone.classList.remove('dragover'); };
+
+    document.addEventListener('dragover', (ev) => {
+      if (!hasFiles(ev)) return;
       ev.preventDefault();
-      zone.classList.add('dragover');
-    }));
-    ['dragleave', 'drop'].forEach((name) => zone.addEventListener(name, (ev) => {
+      ev.dataTransfer.dropEffect = 'copy';
+      const row = folderUnder(ev);
+      markRow(row);
+      zone.classList.toggle('dragover', !row);
+    });
+    // Leaving the window (no related target) clears every highlight.
+    document.addEventListener('dragleave', (ev) => { if (!ev.relatedTarget) clear(); });
+    document.addEventListener('dragend', clear);
+    document.addEventListener('drop', (ev) => {
+      if (!hasFiles(ev)) return;
       ev.preventDefault();
-      if (name === 'dragleave' && zone.contains(ev.relatedTarget)) return;
-      zone.classList.remove('dragover');
-    }));
-    zone.addEventListener('drop', (ev) => {
-      if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) uploadFiles(ev.dataTransfer.files);
+      const row = folderUnder(ev);
+      const path = row ? row.getAttribute('data-drop-path') : state.path;
+      clear();
+      uploadDrop(ev.dataTransfer, path);
     });
   }
 
