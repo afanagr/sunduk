@@ -1106,7 +1106,11 @@
   }
 
   async function walkEntry(entry, prefix, out, depth) {
-    if (out.files.length + out.dirs.length >= UP_MAX_FILES || depth > UP_MAX_DEPTH) return;
+    // The caps are a guard against pathological trees (a folder with tens of
+    // thousands of files, a symlink loop): the walk stops, and `capped` makes
+    // the truncation visible to the user instead of dropping files silently.
+    if (out.files.length + out.dirs.length >= UP_MAX_FILES) { out.capped = out.capped || 'files'; return; }
+    if (depth > UP_MAX_DEPTH) { out.capped = out.capped || 'depth'; return; }
     if (entry.isFile) {
       const file = await new Promise((res, rej) => entry.file(res, rej));
       out.files.push({ file, rel: `${prefix}${entry.name}` });
@@ -1173,11 +1177,18 @@
     // The whole batch targets the folder that was open when it started, even if
     // the user walks away while a long upload is still running.
     const target = `${location.directory}|${location.path}`;
+    // Set by collectFromDrop's walk when it hit the file or depth cap; the
+    // wording is reused for the panel subtitle and for the toast.
+    const trimmed = collection.capped === 'files'
+      ? ` · файлов больше ${UP_MAX_FILES}: часть пропущена`
+      : collection.capped === 'depth' ? ` · вложенность больше ${UP_MAX_DEPTH} уровней: часть файлов пропущена` : '';
     if (!files.length) {
       // A dropped tree can hold nothing but empty folders.
       if (folders.created.length) {
         toast('ok', 'Папки созданы', joinList(folders.created));
         if (target === `${state.directory}|${state.path}`) await loadDir();
+      } else if (trimmed) {
+        toast('err', 'Слишком глубокая вложенность', `Файлы глубже ${UP_MAX_DEPTH} уровней не читаются`);
       } else {
         toast('err', 'Нечего загружать', folders.failed.length ? joinList(folders.failed, 2) : 'Файлы не найдены');
       }
@@ -1273,6 +1284,15 @@
     }
 
     if (errors.length) toast('err', 'Ошибка загрузки', joinList(errors, 2));
+    if (trimmed) {
+      // Say it out loud: the user must know that the tree was cut, not wonder
+      // later where the rest of the files went.
+      panel.sub.textContent += trimmed;
+      toast('info', collection.capped === 'files' ? 'Папка слишком большая' : 'Слишком глубокая вложенность',
+        collection.capped === 'files'
+          ? `Взяты первые ${UP_MAX_FILES} файлов — остальные пропущены, перетащите их отдельно`
+          : `Файлы глубже ${UP_MAX_DEPTH} уровней пропущены`);
+    }
     if (uploaded.length) {
       toast('ok', 'Загружено', joinList(uploaded));
       // Only refresh when the upload landed where the user still is.
@@ -1302,7 +1322,8 @@
       return;
     }
     if (!collection.files.length && !collection.dirs.length) {
-      toast('info', 'Ничего не перетащено', 'Перетащите файлы или папки из проводника');
+      if (collection.capped) toast('err', 'Слишком глубокая вложенность', `Файлы глубже ${UP_MAX_DEPTH} уровней не читаются`);
+      else toast('info', 'Ничего не перетащено', 'Перетащите файлы или папки из проводника');
       return;
     }
     await uploadBatch(collection, location);
