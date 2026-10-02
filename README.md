@@ -42,7 +42,7 @@ Self-hosted веб-файловый менеджер в Docker: управлен
 ## Быстрый старт
 
 ```bash
-git clone <repo> && cd sunduk
+git clone https://github.com/afanagr/sunduk.git sunduk && cd sunduk
 docker compose up -d --build
 ```
 
