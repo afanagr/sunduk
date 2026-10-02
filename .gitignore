@@ -1,0 +1,23 @@
+# Local state and secrets (never commit these)
+data/
+*.db
+*.db-wal
+*.db-shm
+secret.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+
+# Scratch files created while debugging / verifying (never commit these)
+_*.log
+_*.txt
+_*.ps1
+
+# Готовый образ (копируется на сервер вручную, в git ему не место)
+*.tar
+*.tgz

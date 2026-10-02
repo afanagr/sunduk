@@ -1,0 +1,14 @@
+# Файлы, которые не нужны внутри образа.
+__pycache__/
+*.pyc
+*.pyo
+*.md
+
+# Служебные файлы репозитория: в образе им делать нечего.
+.git
+.gitignore
+.gitattributes
+*.tar
+*.tgz
+.DS_Store
+Thumbs.db

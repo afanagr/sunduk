@@ -1,0 +1,39 @@
+# Тексты в репозитории хранятся с переводами строк LF: сервер работает на Linux,
+# а разработка может идти на Windows. При клонировании на Linux файлы приходят
+# ровно такими, как их ожидает Docker и shell.
+* text=auto eol=lf
+
+# Скрипт установки запускается на Linux: CRLF сломал бы ей shebang.
+*.sh       text eol=lf
+Dockerfile text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.py       text eol=lf
+*.js       text eol=lf
+*.css      text eol=lf
+*.html     text eol=lf
+*.md       text eol=lf
+*.svg      text eol=lf
+
+# Двоичные файлы git не нормализует.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.pdf   binary
+*.wav   binary
+*.mp3   binary
+*.mp4   binary
+*.mkv   binary
+*.zip   binary
+*.tar   binary
+*.tgz   binary
+*.db    binary
+*.key   binary
+
+# Windows-скрипты, если появятся.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

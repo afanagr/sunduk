@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Сундук — сетевое хранилище</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+  <!-- ============================== LOGIN ============================== -->
+  <div id="login-view" class="auth-view hidden">
+    <form id="login-form" class="auth-card" autocomplete="on">
+      <div class="brand">
+        <div class="logo">СД</div>
+        <div>
+          <h1>Сундук</h1>
+          <p>Сетевое хранилище</p>
+        </div>
+      </div>
+      <div class="field">
+        <label for="username">Логин</label>
+        <input id="username" name="username" class="input" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="password">Пароль</label>
+        <input id="password" name="password" class="input" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary" type="submit" id="login-submit" style="width:100%; justify-content:center;">Войти</button>
+      <div id="login-error" class="auth-hint" style="color:var(--danger); min-height:16px;"></div>
+      <div class="auth-hint">🔒 Доступ открыт только из локальной сети</div>
+      <div class="auth-hint">Первый вход: <strong>admin / admin</strong> — пароль сменится сразу после входа</div>
+    </form>
+  </div>
+
+  <!-- ============================== MAIN =============================== -->
+  <div id="main-view" class="app hidden">
+    <div class="sidebar-backdrop hidden" id="nav-backdrop"></div>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">СД</div>
+        <div>
+          <h1>Сундук</h1>
+          <p id="brand-sub">Хранилище</p>
+        </div>
+      </div>
+      <nav class="side-nav">
+        <div class="side-label">Каталоги</div>
+        <div id="dir-list"></div>
+        <button class="side-add" id="add-dir-btn" type="button">
+          <span class="ico">＋</span> Добавить каталог
+        </button>
+        <div class="side-label">Управление</div>
+        <div class="share-item" id="nav-links">
+          <span class="ico">🔗</span>
+          <div class="meta">
+            <div class="nm">Внешние ссылки</div>
+            <div class="sub">доступ по токену</div>
+          </div>
+        </div>
+        <div class="share-item" id="nav-password">
+          <span class="ico">🔑</span>
+          <div class="meta">
+            <div class="nm">Сменить пароль</div>
+            <div class="sub">учётная запись администратора</div>
+          </div>
+        </div>
+      </nav>
+      <div class="sidebar-footer" id="usage"></div>
+    </aside>
+
+    <section class="main">
+      <header class="topbar">
+        <button class="btn ghost icon" id="menu-btn" type="button" title="Меню" aria-label="Меню">☰</button>
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input id="search-input" class="input" placeholder="Поиск по хранилищу…" autocomplete="off">
+        </div>
+        <div class="spacer"></div>
+        <div class="user-chip"><span id="user-name"></span></div>
+        <button class="btn ghost" id="logout-btn">Выйти</button>
+      </header>
+
+      <div class="toolbar">
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <button class="btn" id="upload-btn" title="Загрузить файлы">⬆ <span class="btn-label">Загрузить</span></button>
+        <button class="btn" id="mkdir-btn" title="Создать папку">📁 <span class="btn-label">Новая папка</span></button>
+        <button class="btn icon" id="view-btn" title="Вид: список / плитка">▦</button>
+        <button class="btn icon" id="refresh-btn" title="Обновить">⟳</button>
+        <input type="file" id="file-input" multiple class="hidden">
+      </div>
+
+      <div class="content">
+        <div class="dropzone" id="dropzone">
+          <div id="file-area"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="modal-root"></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="/static/viewer.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
