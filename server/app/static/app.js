@@ -242,18 +242,24 @@
       const form = el('form', {}, [
         el('div', { class: 'field' }, [el('label', { text: label }), input]),
       ]);
+      // The footer lives *outside* the <form>, so a type=submit button there
+      // would have no form to submit and a click would do nothing.  Give the
+      // button its own click handler; Enter inside the field still submits the
+      // form natively.
+      const submit = el('button', { class: 'btn primary', type: 'button', text: 'Готово' });
       const modal = openModal({
         title,
         body: form,
         footer: [
           el('button', { class: 'btn ghost', type: 'button', text: 'Отмена', onclick: () => { finish(null); modal.close(); } }),
-          el('button', { class: 'btn primary', type: 'submit', text: 'Готово' }),
+          submit,
         ],
       });
+      const commit = () => { finish(input.value.trim() || null); modal.close(); };
+      submit.addEventListener('click', commit);
       form.addEventListener('submit', (ev) => {
         ev.preventDefault();
-        finish(input.value.trim() || null);
-        modal.close();
+        commit();
       });
       setTimeout(() => { input.focus(); input.select(); }, 30);
     });
