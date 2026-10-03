@@ -470,7 +470,6 @@
       el('th', { text: 'Имя' }),
       el('th', { class: 'right col-size', text: 'Размер' }),
       el('th', { class: 'col-date', text: 'Изменён' }),
-      el('th', { class: 'right', text: '' }),
     ])));
     const tbody = el('tbody');
     entries.forEach((entry) => tbody.appendChild(renderRow(entry)));
@@ -501,7 +500,7 @@
       el('div', { class: 'nm', text: entry.name }),
       el('div', { class: 'sub', text: entry.is_dir ? (state.searchMode ? entry.path : 'папка') : fmtSize(entry.size) }),
     ]));
-    tile.addEventListener('click', () => openEntry(entry));
+    wireEntry(tile, entry);
     return tile;
   }
 
@@ -522,19 +521,9 @@
   // ------------------------------------------------------------------ file row
   function renderRow(entry) {
     const icon = KIND_ICON[entry.kind] || KIND_ICON.file;
-    const nameEl = el('span', { class: 'nm link', text: entry.name, title: entry.path });
-    nameEl.addEventListener('click', () => openEntry(entry));
-    const nameWrap = el('div', { class: 'file-name' }, [el('span', { class: 'ico', text: icon }), nameEl]);
-
-    // Every directory is fully read/write, so every action is always offered.
-    const actions = el('div', { class: 'row-actions' }, [
-      !entry.is_dir ? iconButton('⬇', 'Скачать', () => triggerDownload(fileUrl('/api/download', entry))) : null,
-      !entry.is_dir && FSViewer.isPreviewable(entry.kind) ? iconButton('👁', 'Открыть', () => openPreview(entry)) : null,
-      iconButton('🔗', 'Создать публичную ссылку', () => openShareDialog(entry)),
-      iconButton('↗', 'Переместить', () => openTransferDialog(entry, 'move')),
-      iconButton('⧉', 'Копировать', () => openTransferDialog(entry, 'copy')),
-      iconButton('✏', 'Переименовать', () => renameEntry(entry)),
-      iconButton('🗑', 'Удалить', () => deleteEntry(entry)),
+    const nameWrap = el('div', { class: 'file-name' }, [
+      el('span', { class: 'ico', text: icon }),
+      el('span', { class: 'nm', text: entry.name, title: entry.path }),
     ]);
 
     // One compact meta line, shown always for search hits and only on narrow
@@ -548,12 +537,16 @@
       text: metaBits.join(' · '),
     });
 
-    return el('tr', entry.is_dir ? { 'data-drop-path': entry.path } : null, [
+    // The whole row is the target: a left click opens the entry, a right click
+    // (or a long press on touch) opens the actions menu — there are no per-row
+    // buttons any more, so the row stays clean.
+    const row = el('tr', entry.is_dir ? { 'data-drop-path': entry.path } : null, [
       el('td', {}, [nameWrap, meta]),
       el('td', { class: 'right muted col-size', text: entry.is_dir ? '—' : fmtSize(entry.size) }),
       el('td', { class: 'muted col-date', text: fmtDate(entry.mtime) }),
-      el('td', { class: 'right' }, actions),
     ]);
+    wireEntry(row, entry);
+    return row;
   }
 
   function openEntry(entry) {
@@ -577,6 +570,113 @@
       urlFor: (item) => fileUrl('/api/preview', item),
       downloadUrlFor: (item) => fileUrl('/api/download', item),
     });
+  }
+
+  // --------------------------------------------------- row interaction / menu
+  // A left click on an entry opens it (a folder is entered, a file is previewed
+  // or downloaded).  Every operation on the entry lives in a context menu shown
+  // by a right click (mouse) or a long press (touch) — no per-row buttons.
+  let contextMenu = null;
+  let lastTouchMenuAt = 0;
+
+  function wireEntry(node, entry) {
+    node.addEventListener('click', () => {
+      // The synthetic click that follows a long press must not also open it.
+      if (Date.now() - lastTouchMenuAt < 800) return;
+      openEntry(entry);
+    });
+    node.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      openContextMenu(ev.clientX, ev.clientY, entry);
+    });
+    wireLongPress(node, entry);
+  }
+
+  // Touch devices have no right button: holding a finger on the entry opens the
+  // same menu.  A move of more than 10 px (a scroll) cancels it.
+  function wireLongPress(node, entry) {
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    node.addEventListener('touchstart', (ev) => {
+      if (ev.touches.length !== 1) return;
+      startX = ev.touches[0].clientX;
+      startY = ev.touches[0].clientY;
+      cancel();
+      timer = setTimeout(() => {
+        timer = null;
+        lastTouchMenuAt = Date.now();
+        openContextMenu(startX, startY, entry);
+      }, 480);
+    }, { passive: true });
+    node.addEventListener('touchmove', (ev) => {
+      if (!timer) return;
+      const touch = ev.touches[0];
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) cancel();
+    }, { passive: true });
+    node.addEventListener('touchend', cancel);
+    node.addEventListener('touchcancel', cancel);
+  }
+
+  function closeContextMenu() {
+    if (!contextMenu) return;
+    if (contextMenu.dispose) contextMenu.dispose();
+    contextMenu.remove();
+    contextMenu = null;
+  }
+
+  function openContextMenu(x, y, entry) {
+    closeContextMenu();
+    const menu = el('div', { class: 'context-menu', role: 'menu' });
+    const addItem = (icon, label, handler, danger) => {
+      const item = el('button', {
+        class: 'ctx-item' + (danger ? ' danger' : ''),
+        type: 'button',
+        role: 'menuitem',
+      }, [
+        el('span', { class: 'ctx-ico', text: icon }),
+        el('span', { class: 'ctx-label', text: label }),
+      ]);
+      item.addEventListener('click', (ev) => { ev.stopPropagation(); closeContextMenu(); handler(); });
+      menu.appendChild(item);
+    };
+
+    if (!entry.is_dir && FSViewer.isPreviewable(entry.kind)) {
+      addItem('👁', 'Открыть', () => openPreview(entry));
+    }
+    if (!entry.is_dir) {
+      addItem('⬇', 'Скачать', () => triggerDownload(fileUrl('/api/download', entry)));
+    }
+    addItem('🔗', 'Создать ссылку', () => openShareDialog(entry));
+    addItem('↗', 'Переместить', () => openTransferDialog(entry, 'move'));
+    addItem('⧉', 'Копировать', () => openTransferDialog(entry, 'copy'));
+    addItem('✏', 'Переименовать', () => renameEntry(entry));
+    addItem('🗑', 'Удалить', () => deleteEntry(entry), true);
+
+    document.body.appendChild(menu);
+
+    // Keep the menu inside the viewport even next to the right/bottom edge.
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+
+    const onDown = (ev) => { if (!menu.contains(ev.target)) closeContextMenu(); };
+    const onKey = (ev) => { if (ev.key === 'Escape') closeContextMenu(); };
+    const onDismiss = () => closeContextMenu();
+    menu.dispose = () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('resize', onDismiss);
+      window.removeEventListener('scroll', onDismiss, true);
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('resize', onDismiss);
+    window.addEventListener('scroll', onDismiss, true);
+
+    contextMenu = menu;
   }
 
   // --------------------------------------------------------- share-link dialog
