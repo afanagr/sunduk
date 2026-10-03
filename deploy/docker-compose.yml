@@ -4,7 +4,7 @@
 #  Запуск:      docker compose up -d --build
 #  Панель:      http://<ip-сервера>:8080   (первый вход admin / admin)
 #  Ссылки:      http://<ip-сервера>:8081
-#  Настройки:   ./config/config.yml        (начинаются с файла base_url)
+#  Настройки:   ./config/config.yml        (public_ip — адрес внешних ссылок)
 #
 #  Переменных окружения нет: всё в config/config.yml. Каталоги подключаются
 #  прямо в панели — правка этого файла после установки не требуется.
@@ -16,7 +16,7 @@ services:
     build:
       context: ../server           # исходники лежат в server/ этого же репозитория
       dockerfile: Dockerfile
-    image: sunduk:1.0.0
+    image: sunduk:1.1.0
     container_name: sunduk
     restart: unless-stopped
 

@@ -31,8 +31,9 @@ cat <<'EOF'
 Что сделать дальше:
   1. Зайдите в панель и задайте новый пароль (он спрашивается сразу).
   2. Нажмите «Добавить каталог» и укажите путь к папке на сервере.
-  3. Если ссылки должны открываться извне — поправьте base_url в
-     config/config.yml и перезапустите: docker compose restart
+  3. Если ссылки должны открываться извне — проверьте public_ip в
+     config/config.yml (base_url нужен только для HTTPS/домена) и
+     перезапустите: docker compose restart
 
 Логи:  docker compose logs -f
 Тест:  docker compose exec -T sunduk python tools/smoke_test.py

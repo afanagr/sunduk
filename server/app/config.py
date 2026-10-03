@@ -70,6 +70,10 @@ class AppConfig(BaseModel):
     host: str = "0.0.0.0"
     admin_port: int = 8080
     public_port: int = 8081
+    # IP (или имя хоста) для формирования внешних ссылок. Если задан, ссылки
+    # строятся как http://<public_ip>:<public_port> — указывать порт в base_url
+    # вручную не нужно.
+    public_ip: str = ""
     base_url: str = "http://localhost:8081"
     data_dir: str = DEFAULT_DATA_DIR
     # Prefix under which the server filesystem is mounted in the container.
@@ -88,7 +92,21 @@ class AppConfig(BaseModel):
     def _sane(self) -> "AppConfig":
         if self.admin_port == self.public_port:
             raise ValueError("admin_port and public_port must differ")
-        self.base_url = self.base_url.rstrip("/") or "http://localhost:8081"
+
+        # public_ip — простой способ задать внешний адрес: из него и public_port
+        # собирается base_url (обычный http). Полный base_url остаётся для HTTPS
+        # и доменов за reverse-proxy.
+        public_ip = (self.public_ip or "").strip()
+        if "://" in public_ip:
+            public_ip = public_ip.split("://", 1)[1]
+        public_ip = public_ip.strip().strip("/")
+        if public_ip:
+            if "/" in public_ip:
+                raise ValueError("public_ip must be an IP address or host name")
+            self.public_ip = public_ip
+            self.base_url = f"http://{public_ip}:{self.public_port}"
+
+        self.base_url = self.base_url.rstrip("/") or f"http://localhost:{self.public_port}"
         if not self.host_root.startswith("/"):
             raise ValueError("host_root must be an absolute path, e.g. /host")
         self.host_root = self.host_root.rstrip("/") or "/"
@@ -218,9 +236,11 @@ def load_config(path: Optional[str] = None) -> AppConfig:
     if not config.secret_key:
         config.secret_key = _load_or_create_secret_key(config.data_dir)
 
+    source = f"public_ip={config.public_ip}" if config.public_ip else "base_url"
     log.info(
-        "config loaded from %s (host_root=%s, base_url=%s, admin :%s, public :%s)",
-        config_path, config.host_root, config.base_url, config.admin_port, config.public_port,
+        "config loaded from %s (host_root=%s, links via %s -> %s, admin :%s, public :%s)",
+        config_path, config.host_root, source, config.base_url,
+        config.admin_port, config.public_port,
     )
     return config
 

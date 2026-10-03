@@ -49,9 +49,10 @@ sudo docker compose up -d --build
 
 В `config/config.yml`:
 
-* `base_url` — адрес, по которому доступен порт 8081. Из него строятся ссылки,
-  поэтому он обязателен: `http://192.168.1.10:8081` или
-  `https://files.example.com`.
+* `public_ip` — IP (или имя хоста), по которому доступен порт 8081: ссылки
+  строятся как `http://<public_ip>:<public_port>`, например `95.31.37.196`;
+* `base_url` — полный адрес ссылок; применяется, когда `public_ip` пуст (для
+  HTTPS/домена): `https://files.example.com`.
 * `lan_allowlist` — кому отвечает панель. Оставьте свои подсети (VPN, другой
   сегмент сети — добавьте сюда).
 
@@ -125,7 +126,7 @@ docker compose up -d --build
 | Просят пароль, но он неизвестен | `docker compose exec sunduk python tools/reset_admin.py` |
 | «Каталог недоступен на сервере» | папку переименовали/отмонтировали — поправьте путь в панели |
 | «каталог не найден на сервере» | путь вне смонтированного `/host` либо не существует |
-| Ссылки не открываются извне | `base_url` и проброс порта 8081 |
+| Ссылки не открываются извне | `public_ip`/`base_url` и проброс порта 8081 |
 | Ошибка монтирования `/` при `docker compose up` | запускать от root (sudo) |
 | Контейнер сразу перезапускается | `docker compose logs` — обычно опечатка в `config/config.yml` |
 | В логах `data directory /data is unusable: no write permission` | том `/data` остался от старой версии и принадлежит другому пользователю: `docker run --rm -v sunduk_data:/data alpine chown 0:0 /data` |

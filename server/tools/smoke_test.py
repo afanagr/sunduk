@@ -1007,7 +1007,14 @@ def main():
 
     ADMIN = f"http://127.0.0.1:{SETTINGS.get('admin_port', 8080)}"
     PUBLIC = f"http://127.0.0.1:{SETTINGS.get('public_port', 8081)}"
-    BASE_URL = str(SETTINGS.get("base_url") or PUBLIC).rstrip("/")
+    public_ip = str(SETTINGS.get("public_ip") or "").strip()
+    if "://" in public_ip:
+        public_ip = public_ip.split("://", 1)[1]
+    public_ip = public_ip.strip().strip("/")
+    if public_ip:
+        BASE_URL = f"http://{public_ip}:{SETTINGS.get('public_port', 8081)}"
+    else:
+        BASE_URL = str(SETTINGS.get("base_url") or PUBLIC).rstrip("/")
 
     print(f"панель    : {ADMIN}")
     print(f"ссылки    : {PUBLIC}")

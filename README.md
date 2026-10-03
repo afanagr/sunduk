@@ -194,7 +194,7 @@ docker compose up -d --build
 
 | Секция | Ключи |
 |--------|-------|
-| Слушатели | `host`, `admin_port`, `public_port`, `base_url` |
+| Слушатели | `host`, `admin_port`, `public_port`, `public_ip`, `base_url` |
 | Пути | `data_dir`, `host_root`, `secret_key` |
 | Доступ | `lan_allowlist` (CIDR, кому отвечает панель), `trusted_proxies` |
 | Безопасность | `max_upload_mb`, `session_max_age_hours`, `cookie_secure`, `cookie_name`, `csrf_enabled`, `login_rate_limit_per_minute`, `public_rate_limit_per_minute`, `max_preview_mb` |
@@ -202,9 +202,12 @@ docker compose up -d --build
 
 Что важно знать:
 
-* **`base_url`** — адрес, из которого строятся ссылки. Обязан указывать на
-  публичный порт (`8081`), иначе получатели получат нерабочий URL. Если он
-  начинается с `https://`, cookie сессии автоматически становятся `Secure`.
+* **`public_ip`** — IP (или имя хоста), по которому открывается порт внешних
+  ссылок. Если задан, ссылки строятся как `http://<public_ip>:<public_port>` —
+  это основной способ для домашнего сервера с прямым IP.
+* **`base_url`** — полный адрес для ссылок; применяется, когда `public_ip` пуст
+  (например, `https://files.example.com` за reverse-proxy). Если он начинается
+  с `https://`, cookie сессии автоматически становятся `Secure`.
 * **`host_root`** — префикс, под которым файловая система сервера видна в
   контейнере (`/host`). Меняйте вместе с точкой монтирования в
   `docker-compose.yml`.
@@ -227,14 +230,14 @@ docker compose up -d --build
 
 ```bash
 cd deploy
-docker compose up -d --build          # или: docker load < sunduk-1.0.0.tar
+docker compose up -d --build          # или: docker load < sunduk-1.1.0.tar
 ```
 
 Чек-лист:
 
-1. В `config/config.yml` укажите `base_url` (например
-   `https://files.example.com`) и, при необходимости, свою подсеть в
-   `lan_allowlist`.
+1. В `config/config.yml` укажите `public_ip` (например `95.31.37.196`) либо, для
+   HTTPS/домена, `base_url` (`https://files.example.com`); при необходимости
+   поправьте свою подсеть в `lan_allowlist`.
 2. Порт **8080 не пробрасывайте** на роутере — он для локальной сети.
 3. Порт **8081** (или HTTPS-прокси перед ним) открывайте наружу.
 4. Первый вход: `admin / admin` → панель попросит новый пароль.
