@@ -1,0 +1,77 @@
+# Сборка образа и сквозной тест на каждый push в main и на pull request.
+#
+# Тест не выдумывается заново: берётся штатный tools/smoke_test.py, который
+# поднимает контейнер так же, как это делает пользователь (docker-compose.yml),
+# и прогоняет весь функционал по HTTP — панель (8080) и публичные ссылки (8081).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Одновременно нужен только последний прогон для конкретной ветки/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Сборка и сквозной тест
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Образ собирается тем же Dockerfile и кладётся в текущий демон под тегом
+      # sunduk:latest — именно его ожидает docker-compose.yml (image: sunduk:latest).
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          load: true
+          tags: sunduk:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate docker-compose.yml
+        run: docker compose config -q
+
+      # Поднимаем именно пользовательский docker-compose.yml: порты, монтирование
+      # /:/host, read-only rootfs и cap_drop: ALL — всё как на сервере.
+      - name: Start container
+        run: docker compose up -d --no-build
+
+      - name: Wait for the health endpoints
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
+               && curl -fsS http://127.0.0.1:8081/healthz >/dev/null 2>&1; then
+              echo "Сундук отвечает (попытка ${attempt})"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Сундук не ответил за 120 секунд" >&2
+          exit 1
+
+      - name: Smoke test
+        run: docker compose exec -T sunduk python tools/smoke_test.py
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

@@ -1,0 +1,26 @@
+# Автоматические обновления зависимостей и самих workflow-ов.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - ci
+
+  - package-ecosystem: pip
+    directory: "/server"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - python
+
+  - package-ecosystem: docker
+    directory: "/server"
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker

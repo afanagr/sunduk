@@ -1,0 +1,61 @@
+name: Сообщение об ошибке
+description: Что-то работает не так, как ожидалось
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Пожалуйста, приложите логи контейнера
+        (`docker compose logs`) — по ним причина обычно видна сразу.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: Что произошло
+      description: Опишите поведение и то, что вы ожидали увидеть.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. открыть панель на :8080
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия Сундука
+      description: Тег релиза или вывод `git describe --tags` / `docker image inspect sunduk:latest`.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС и версия Docker (`docker --version`, `docker compose version`), браузер, где развёрнуто.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Логи
+      description: Вывод `docker compose logs --no-color`. Уберите пароли и токены ссылок.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: config
+    attributes:
+      label: config/config.yml
+      description: Без `secret_key` и паролей.
+      render: yaml
+    validations:
+      required: false

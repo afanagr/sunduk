@@ -1,0 +1,162 @@
+# Публикация Сундука по тегу версии.
+#
+#   git tag v1.2.3
+#   git push origin v1.2.3
+#
+# Сначала образ проходит тот же сквозной тест, что и в CI (ci.yml). Если он
+# зелёный — образ публикуется в GitHub Container Registry
+# (ghcr.io/afanagr/sunduk) и создаётся релиз GitHub, к которому прикладывается
+# офлайн-архив sunduk-<версия>.tar: его deploy/install.sh подхватывает через
+# docker load на сервере без доступа в интернет.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Тот же сквозной тест, что и в CI: релиз без зелёного теста невозможен.
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Сквозной тест
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          load: true
+          tags: sunduk:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: docker compose up -d --no-build
+
+      - name: Wait for the health endpoints
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/healthz >/dev/null 2>&1 \
+               && curl -fsS http://127.0.0.1:8081/healthz >/dev/null 2>&1; then
+              echo "Сундук отвечает (попытка ${attempt})"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Сундук не ответил за 120 секунд" >&2
+          exit 1
+
+      - name: Smoke test
+        run: docker compose exec -T sunduk python tools/smoke_test.py
+
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  # ---------------------------------------------------------------------------
+  # 2. Публикация образа в GHCR и создание релиза GitHub.
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Образ в GHCR и релиз GitHub
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: write     # создать релиз GitHub
+      packages: write     # опубликовать образ в ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # github.ref_name = «v1.2.3»; для имени артефакта и заголовка берём «1.2.3».
+      - name: Resolve version
+        id: version
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Образ для серверов без интернета: deploy/install.sh ищет файл
+      # sunduk-*.tar и делает docker load, после чего docker compose берёт
+      # sunduk:latest. Выход type=tar даёт ровно такой файл; provenance и sbom
+      # выключены, иначе в архив попадут attestation-манифесты и docker load
+      # его не разберёт.
+      - name: Build offline image archive
+        uses: docker/build-push-action@v6
+        with:
+          context: ./server
+          file: ./server/Dockerfile
+          platforms: linux/amd64
+          tags: |
+            sunduk:${{ steps.version.outputs.value }}
+            sunduk:latest
+          outputs: type=tar,dest=sunduk-${{ steps.version.outputs.value }}.tar
+          provenance: false
+          sbom: false
+          cache-from: type=gha
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset="sunduk-${{ steps.version.outputs.value }}.tar"
+          gh release create "${GITHUB_REF_NAME}" "${asset}" \
+            --title "Сундук ${{ steps.version.outputs.value }}" \
+            --generate-notes \
+            || gh release upload "${GITHUB_REF_NAME}" "${asset}" --clobber

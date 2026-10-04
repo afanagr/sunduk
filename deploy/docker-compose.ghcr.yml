@@ -1,0 +1,74 @@
+# =============================================================================
+#  Сундук — запуск из готового образа (GHCR).
+#
+#  Для панелей управления стеками (Dockge, Portainer и т.п.), которые хранят
+#  только compose-файл и запускают `docker compose up -d` в своей папке.
+#
+#  Чем отличается от deploy/docker-compose.yml:
+#    * нет секции build — образ берётся готовым из ghcr.io, его публикует
+#      workflow release.yml по тегу версии;
+#    * поэтому рядом со стеком НЕ нужны исходники server/.
+#
+#  Как использовать в Dockge:
+#    1. Создайте стек и вставьте этот файл как compose.yaml.
+#    2. Рядом создайте каталог config с файлом config.yml
+#       (содержимое — deploy/config/config.yml); он монтируется только для
+#       чтения. Без него Сундук стартует с настройками по умолчанию и внешние
+#       ссылки будут http://localhost:8081.
+#    3. Deploy. Панель: http://<ip>:8080 (первый вход admin / admin).
+#
+#  Обновление версии: docker compose pull && docker compose up -d
+# =============================================================================
+name: sunduk
+
+services:
+  sunduk:
+    # Публикуется автоматически по тегу vX.Y.Z. Пакет по умолчанию приватный:
+    # либо сделайте его Public (Packages -> sunduk -> Change visibility), либо
+    # выполните на хосте от имени владельца Docker: docker login ghcr.io
+    image: ghcr.io/afanagr/sunduk:latest
+    container_name: sunduk
+    restart: unless-stopped
+
+    # 8080 — панель, только локальная сеть: НЕ открывайте его на роутере.
+    # 8081 — внешние ссылки: этот порт (или HTTPS-прокси перед ним) наружу.
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+
+    volumes:
+      # Весь сервер виден в контейнере как /host — оттуда панель берёт
+      # каталоги. Чтобы ограничить доступ, закомментируйте строку ниже и
+      # перечислите нужные каталоги, например:
+      #   - /mnt/media:/host/mnt/media:rw
+      #   - /srv/data:/host/srv/data:rw
+      - /:/host:rw
+      # Настройки (только для чтения). Каталог ./config должен лежать рядом с
+      # этим файлом и содержать config.yml.
+      - ./config:/config:ro
+      - sunduk_data:/data
+
+    # Контейнер работает от root, остальное закрыто: read-only rootfs, без
+    # лишних capabilities, без повышения привилегий.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN          # смена владельца при копировании/перемещении
+      - DAC_OVERRIDE   # обход прав: запись в каталоги чужих пользователей
+      - FOWNER         # смена прав и времени у чужих файлов
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sunduk_data:
+    # Фиксированное имя тома: бэкапы и переносы не зависят от имени проекта.
+    name: sunduk_data

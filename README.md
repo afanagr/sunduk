@@ -1,5 +1,10 @@
 # Сундук (Sunduk)
 
+[![CI](https://github.com/afanagr/sunduk/actions/workflows/ci.yml/badge.svg)](https://github.com/afanagr/sunduk/actions/workflows/ci.yml)
+[![Release](https://github.com/afanagr/sunduk/actions/workflows/release.yml/badge.svg)](https://github.com/afanagr/sunduk/actions/workflows/release.yml)
+[![Image](https://img.shields.io/badge/ghcr.io-afanagr%2Fsunduk-blue)](https://github.com/afanagr/sunduk/pkgs/container/sunduk)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
 Self-hosted веб-файловый менеджер в Docker: управление файлами на сервере из
 локальной сети и **публичные ссылки на файлы и папки** для доступа из интернета.
 
@@ -230,8 +235,13 @@ docker compose up -d --build
 
 ```bash
 cd deploy
-docker compose up -d --build          # или: docker load < sunduk-1.1.0.tar
+docker compose up -d --build          # или: docker load < sunduk-<версия>.tar
 ```
+
+Для панелей управления стеками (Dockge, Portainer) есть
+[`deploy/docker-compose.ghcr.yml`](deploy/docker-compose.ghcr.yml): тот же
+контейнер, но образ берётся готовым из `ghcr.io` — без сборки и без исходников
+`server/`. Рядом со стеком нужно положить `config/config.yml`.
 
 Чек-лист:
 
@@ -389,6 +399,41 @@ docker compose exec -T sunduk python tools/smoke_test.py --big-mb 96
 | Загрузка крупного файла обрывается (`Connection reset`) | в логах `No space left on device`: проверьте место на томе `/data` (для буферизации загрузок `/tmp` не используется) |
 | Публичный порт недоступен извне | пробросьте `8081` на роутере и укажите внешний адрес в `base_url` |
 | `docker compose` не даёт смонтировать `/` | запускайте compose от root (`sudo`) — монтаж корня сервера требует прав |
+
+---
+
+## Автоматическая сборка и публикация
+
+Проект подготовлен к работе через GitHub Actions — отдельного CI-сервера и
+секретов не требуется:
+
+| Workflow | Когда запускается | Что делает |
+|----------|-------------------|------------|
+| [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | push в `main`, pull request | собирает образ из `server/`, поднимает пользовательский `docker-compose.yml` и прогоняет сквозной [`tools/smoke_test.py`](server/tools/smoke_test.py) внутри контейнера |
+| [`.github/workflows/release.yml`](.github/workflows/release.yml) | push тега `v*` | повторяет тест, публикует образ в **GitHub Container Registry** и создаёт релиз GitHub с офлайн-архивом |
+
+Выпуск версии:
+
+```bash
+git tag v1.2.3
+git push origin v1.2.3
+```
+
+После этого:
+
+* образ доступен как `ghcr.io/afanagr/sunduk` с тегами `1.2.3`, `1.2` и
+  `latest`:
+
+  ```bash
+  docker pull ghcr.io/afanagr/sunduk:latest
+  ```
+
+* к релизу приложен файл `sunduk-1.2.3.tar` (образ с тегами `sunduk:1.2.3` и
+  `sunduk:latest`) — `deploy/install.sh` сам найдёт его в каталоге и сделает
+  `docker load`, так что на сервере без интернета ничего собирать не нужно.
+
+Зависимости и сами workflow-ы обновляет Dependabot
+([`.github/dependabot.yml`](.github/dependabot.yml)).
 
 ---
 

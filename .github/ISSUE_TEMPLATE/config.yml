@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Документация и установка
+    url: https://github.com/afanagr/sunduk#readme
+    about: Быстрый старт, настройка config/config.yml, диагностика.
+  - name: Безопасность
+    url: https://github.com/afanagr/sunduk/security/policy
+    about: Об уязвимостях — приватно, см. SECURITY.md.

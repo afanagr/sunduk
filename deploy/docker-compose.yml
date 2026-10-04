@@ -16,7 +16,7 @@ services:
     build:
       context: ../server           # исходники лежат в server/ этого же репозитория
       dockerfile: Dockerfile
-    image: sunduk:1.1.0
+    image: sunduk:latest         # тег, под которым install.sh грузит sunduk-*.tar
     container_name: sunduk
     restart: unless-stopped
 
