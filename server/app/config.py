@@ -1,11 +1,21 @@
 """Configuration model and loader for Sunduk.
 
-Everything the application needs at start-up lives in a single YAML file
-(``/config/config.yml``), mounted read-only into the container.  There is
-deliberately **no** environment-variable handling anywhere: the file is the only
-source of truth and what it says is what runs.
+Settings come from two sources:
 
-The directories exposed in the interface are *not* part of that file any more.
+1. the optional YAML file ``/config/config.yml`` — mounted read-only by the
+   ``docker-compose.yml`` in the repository root and by ``deploy/``;
+2. environment variables, which win over the file (and over the built-in
+   defaults) whenever they are set.  The minimal stack
+   ``deploy/docker-compose.dockge.yml`` uses only these, so a container can be
+   configured without any file at all.
+
+An environment variable is the upper-case spelling of the config key
+(``ADMIN_PORT``); the lower-case spelling (``admin_port``) and the ``SUNDUK_``
+prefix are accepted as well.  Every setting has a working default, so the two
+ports plus the public address (``PUBLIC_ADDRESS`` — an IP or host name, or a
+full URL when it carries a scheme) are enough to start.
+
+The directories exposed in the interface are *not* part of these settings.
 They are added from the admin panel (server path + display name) and stored in
 the database — see :mod:`app.directories`.  The server filesystem itself is
 mounted once at ``host_root`` (``/host``), so adding a directory never requires
@@ -15,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 from typing import List, Optional
 
@@ -27,6 +38,65 @@ DEFAULT_CONFIG_PATH = "/config/config.yml"
 DEFAULT_DATA_DIR = "/data"
 DEFAULT_HOST_ROOT = "/host"
 SECRET_KEY_FILE = "secret.key"
+
+# Settings that may be given as environment variables.  The key itself is
+# enough for every one of them (``ADMIN_PORT``, ``admin_port`` or
+# ``SUNDUK_ADMIN_PORT``); the extra names are conveniences for values people
+# look for under another name.
+ENV_KEYS = {
+    "host": (),
+    "admin_port": (),
+    "public_port": (),
+    "public_ip": ("PUBLIC_ADDRESS", "PUBLIC_IP"),
+    "base_url": (),
+    "data_dir": (),
+    "host_root": (),
+    "secret_key": (),
+    "lan_allowlist": ("ALLOWLIST",),
+    "trusted_proxies": (),
+}
+LIST_KEYS = {"lan_allowlist", "trusted_proxies"}
+
+
+def env_setting(key: str) -> Optional[str]:
+    """Value of the environment variable for one config key, if any is set.
+
+    Names are tried in this order: ``KEY``, ``key``, ``SUNDUK_KEY`` — and the
+    same three for every alias of the key.  An empty value counts as unset, so
+    ``PUBLIC_ADDRESS=`` falls back to the file/default.
+    """
+    for name in (key, *ENV_KEYS.get(key, ())):
+        for candidate in (name.upper(), name.lower(), "SUNDUK_" + name.upper()):
+            value = os.environ.get(candidate)
+            if value is not None and value.strip():
+                return value.strip()
+    return None
+
+
+def apply_env(config: dict) -> dict:
+    """Overlay environment variables on top of the file's settings.
+
+    ``config`` is updated in place; the overrides are returned so the caller
+    can log them and tell where the settings came from.
+    """
+    overrides: dict = {}
+    for key in ENV_KEYS:
+        value = env_setting(key)
+        if value is None:
+            continue
+        if key in LIST_KEYS:
+            overrides[key] = [part for part in re.split(r"[,\s]+", value) if part]
+        elif key == "public_ip" and "://" in value:
+            # A full URL (https://files.example.com) is a base_url: it carries
+            # the scheme, which public_ip deliberately never does.  The file's
+            # public_ip is dropped on purpose — otherwise it would win over this
+            # base_url (see AppConfig._sane).
+            overrides["base_url"] = value
+            overrides["public_ip"] = ""
+        else:
+            overrides[key] = value
+    config.update(overrides)
+    return overrides
 
 
 class SecurityConfig(BaseModel):
@@ -174,8 +244,9 @@ def _load_or_create_secret_key(data_dir: str) -> str:
     """Read ``<data_dir>/secret.key`` or create it with fresh randomness.
 
     Sessions and the encrypted copies of link tokens/passwords survive a restart
-    because the key is persisted on the data volume instead of living in an
-    environment variable.
+    because the key is persisted on the data volume instead of living only in an
+    environment variable (``SECRET_KEY`` is accepted for moving it between
+    servers).
     """
     path = os.path.join(data_dir, SECRET_KEY_FILE)
     try:
@@ -205,7 +276,11 @@ def _load_or_create_secret_key(data_dir: str) -> str:
 # Loader
 # ---------------------------------------------------------------------------
 def load_config(path: Optional[str] = None) -> AppConfig:
-    """Read the YAML settings file (``/config/config.yml`` by default)."""
+    """Read the settings: environment variables over ``/config/config.yml``.
+
+    The file is optional — without it the built-in defaults apply, which is all
+    the minimal stack needs.
+    """
     config_path = path or DEFAULT_CONFIG_PATH
     try:
         with open(config_path, "r", encoding="utf-8") as handle:
@@ -228,6 +303,10 @@ def load_config(path: Optional[str] = None) -> AppConfig:
             config_path, ", ".join(legacy),
         )
 
+    overrides = apply_env(raw)
+    if overrides:
+        log.info("environment overrides: %s", ", ".join(sorted(overrides)))
+
     try:
         config = AppConfig(**raw)
     except Exception as exc:  # pydantic ValidationError -> readable message
@@ -237,9 +316,10 @@ def load_config(path: Optional[str] = None) -> AppConfig:
         config.secret_key = _load_or_create_secret_key(config.data_dir)
 
     source = f"public_ip={config.public_ip}" if config.public_ip else "base_url"
+    origin = f"{config_path} + environment" if overrides else config_path
     log.info(
         "config loaded from %s (host_root=%s, links via %s -> %s, admin :%s, public :%s)",
-        config_path, config.host_root, source, config.base_url,
+        origin, config.host_root, source, config.base_url,
         config.admin_port, config.public_port,
     )
     return config

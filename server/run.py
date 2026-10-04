@@ -6,8 +6,10 @@ public share endpoint bind to different ports:
 * admin  -> ``admin_port``  (LAN only, authenticated)
 * public -> ``public_port`` (internet, share links only)
 
-Every setting comes from ``/config/config.yml``: this program reads no
-environment variable at all.
+Every setting comes from ``app.config.load_config``: the optional
+``/config/config.yml`` with the environment variables that override it on top.
+The minimal stack (``deploy/docker-compose.dockge.yml``) uses variables only and
+needs no file at all.
 """
 from __future__ import annotations
 
@@ -36,12 +38,11 @@ def prepare_spool_dir(config: AppConfig) -> None:
     """Send temporary files to the data volume instead of the tiny tmpfs /tmp.
 
     The ASGI server spools every uploaded file larger than ~1 MB into a real
-    temporary file, and ``/tmp`` is a 64 MB tmpfs inside the container (see the
-    hardening section of docker-compose.yml).  Without this, any upload above
-    that size dies with ``No space left on device`` no matter what
-    ``max_upload_mb`` allows.  ``/data`` is the only writable volume, so the
-    spool directory lives there and is created here — the container root
-    filesystem is read-only.
+    temporary file, and ``/tmp`` has to stay small (the hardened compose files
+    mount it as a 64 MB tmpfs).  Without this, any upload above that size dies
+    with ``No space left on device`` no matter what ``max_upload_mb`` allows.
+    ``/data`` is where the application keeps its state, so the spool directory
+    lives there and is created here.
     """
     spool = config.tmp_dir
     try:

@@ -57,8 +57,9 @@ docker compose up -d --build
 3. Нажмите **«＋ Добавить каталог»** в сайдбаре и укажите каталог на сервере.
 4. Готово: файлы доступны. Для доступа из интернета используйте порт `8081`.
 
-Никакие `.env` не нужны: Сундук не читает переменные окружения вообще.
-Все настройки лежат в одном файле `config/config.yml`.
+Никакие `.env` не нужны: все настройки лежат в одном файле `config/config.yml`
+(при желании любое значение переопределяется переменной окружения — см.
+«Конфигурация» ниже).
 
 ---
 
@@ -194,8 +195,17 @@ docker compose up -d --build
 
 ## Конфигурация
 
-Единственный файл настроек — `config/config.yml` (монтируется в контейнер как
+Основной источник настроек — `config/config.yml` (монтируется в контейнер как
 `/config/config.yml` read-only). После правки: `docker compose restart`.
+
+Любое значение можно задать и **переменной окружения** — она важнее файла, а
+при отсутствии файла работает одна (имя совпадает с ключом: `ADMIN_PORT`,
+`PUBLIC_PORT`, `DATA_DIR`, `LAN_ALLOWLIST`, `HOST_ROOT`; принимаются также
+нижний регистр и префикс `SUNDUK_`). Для внешнего адреса есть удобное имя
+`PUBLIC_ADDRESS`: IP или имя хоста, а со схемой (`https://files.example.com`) —
+готовый `base_url`. Так собран минимальный стек
+[`deploy/docker-compose.dockge.yml`](deploy/docker-compose.dockge.yml), в
+котором файла настроек нет вовсе.
 
 | Секция | Ключи |
 |--------|-------|
@@ -238,16 +248,34 @@ cd deploy
 docker compose up -d --build          # или: docker load < sunduk-<версия>.tar
 ```
 
-Для панелей управления стеками (Dockge, Portainer) есть
-[`deploy/docker-compose.ghcr.yml`](deploy/docker-compose.ghcr.yml): тот же
-контейнер, но образ берётся готовым из `ghcr.io` — без сборки и без исходников
-`server/`. Рядом со стеком нужно положить `config/config.yml`.
+Для панелей управления стеками (Dockge, Portainer) есть минимальный
+[`deploy/docker-compose.dockge.yml`](deploy/docker-compose.dockge.yml): тот же
+контейнер из `ghcr.io`, но рядом не нужно ничего — ни `config/config.yml`, ни
+тома. Вся настройка — три переменные окружения в самом файле: `admin_port`
+(панель, только локальная сеть), `public_port` (внешние ссылки) и
+`public_address` — адрес снаружи одной строкой: IP, домен или `https://домен`
+для HTTPS-прокси (тогда cookie сессии станут `Secure`). Остальное берётся из
+значений по умолчанию: `/data` для базы и ключа, `/host` для файловой системы
+сервера, панель отвечает только локальным сетям.
+
+Проброса портов в файле нет: контейнер работает в сети хоста
+(`network_mode: host`), поэтому firewall сервера закрывает Сундук как обычную
+программу (порты, опубликованные Docker, проходят мимо firewall), а на роутере
+достаточно открыть `public_port`. Нужен Docker на Linux (в Docker Desktop
+host-сеть живёт внутри его ВМ).
+
+Если удобнее держать настройки файлом рядом со стеком, есть
+[`deploy/docker-compose.ghcr.yml`](deploy/docker-compose.ghcr.yml): тот же образ
+из `ghcr.io` плюс `config/config.yml` в каталоге стека (содержимое —
+`deploy/config/config.yml`).
 
 Чек-лист:
 
-1. В `config/config.yml` укажите `public_ip` (например `95.31.37.196`) либо, для
-   HTTPS/домена, `base_url` (`https://files.example.com`); при необходимости
-   поправьте свою подсеть в `lan_allowlist`.
+1. Укажите адрес снаружи: в `config/config.yml` — `public_ip` (например
+   `95.31.37.196`) либо, для HTTPS/домена, `base_url`
+   (`https://files.example.com`); в минимальном стеке то же самое задаётся
+   переменной `public_address`. При необходимости поправьте свою подсеть в
+   `lan_allowlist`.
 2. Порт **8080 не пробрасывайте** на роутере — он для локальной сети.
 3. Порт **8081** (или HTTPS-прокси перед ним) открывайте наружу.
 4. Первый вход: `admin / admin` → панель попросит новый пароль.
@@ -263,9 +291,10 @@ files.example.com {
 }
 ```
 
-Затем в `config/config.yml` поставьте `base_url: "https://files.example.com"` и
+Затем в `config/config.yml` поставьте `base_url: "https://files.example.com"` (в
+минимальном стеке — `public_address: "https://files.example.com"`) и
 `trusted_proxies: ["172.16.0.0/12"]` (сеть прокси), если он передаёт
-`X-Forwarded-For`. `cookie_secure` включится сам из-за `https://` в `base_url`.
+`X-Forwarded-For`. `cookie_secure` включится сам из-за `https://` в адресе.
 
 ### Обновление с предыдущей версии
 
@@ -283,7 +312,7 @@ files.example.com {
 ```
 sunduk/
 ├── docker-compose.yml       # панель 8080, ссылки 8081, монтаж сервера в /host
-├── config/config.yml        # все настройки (env не используется)
+├── config/config.yml        # все настройки (env-переменные переопределяют)
 ├── deploy/                  # боевой комплект для сервера (compose, install.sh, README)
 ├── demo-data/               # готовые файлы для проверки интерфейса (files/media/photo)
 └── server/

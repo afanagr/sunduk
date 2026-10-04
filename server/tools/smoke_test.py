@@ -37,9 +37,10 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-import yaml
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-CONFIG_PATH = "/config/config.yml"
+from app.config import load_config             # noqa: E402  (needs the path above)
+
 FIXTURE_BASE = "/tmp/sunduk-smoke"        # server path (below host_root)
 
 FAILURES: list = []
@@ -106,12 +107,14 @@ def archive_mode(content, name):
 
 
 def load_settings():
-    try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as handle:
-            loaded = yaml.safe_load(handle) or {}
-        return loaded if isinstance(loaded, dict) else {}
-    except (OSError, yaml.YAMLError):
-        return {}
+    """Effective settings — through the very loader the application uses.
+
+    That is ``/config/config.yml`` (optional) plus the environment variables
+    that override it, so the test always talks to the ports and the address the
+    panel was really started with.  A broken settings file stops the test with
+    the same message the panel would show.
+    """
+    return load_config().model_dump()
 
 
 class Client:
