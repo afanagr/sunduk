@@ -30,7 +30,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # Образ собирается тем же Dockerfile и кладётся в текущий демон под тегом
       # sunduk:latest — именно его ожидает docker-compose.yml (image: sunduk:latest).
