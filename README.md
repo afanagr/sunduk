@@ -345,7 +345,7 @@ files.example.com {
 ```
 sunduk/
 ├── docker-compose.yml       # панель 8080, ссылки 8081, монтаж сервера в /host
-├── config/config.yml        # все настройки (env-переменные переопределяют)
+├── config/config.yml        # настройки (переменные окружения важнее)
 ├── deploy/                  # боевой комплект для сервера (compose, install.sh, README)
 ├── demo-data/               # готовые файлы для проверки интерфейса (files/media/photo)
 └── server/
