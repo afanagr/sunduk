@@ -1,6 +1,6 @@
 fastapi==0.115.6
 uvicorn==0.34.0
-pydantic==2.10.4
+pydantic==2.13.5
 PyYAML==6.0.2
 itsdangerous==2.2.0
 python-multipart==0.0.20
