@@ -6,9 +6,17 @@
 
 ```
 deploy/
-├── docker-compose.yml     # панель 8080 (LAN) + ссылки 8081 (наружу)
-├── config/config.yml      # настройки (или переменные окружения)
-└── install.sh             # сборка (или docker load) и запуск
+├── docker-compose.yml           # панель 8080 (LAN) + ссылки 8081 (наружу)
+├── config/config.yml            # настройки (или переменные окружения)
+├── install.sh                   # сборка (или docker load) и запуск
+├── docker-compose.dockge.yml    # минимальный стек для панелей: только переменные, сеть хоста
+├── docker-compose.ghcr.yml      # готовый образ из ghcr.io + config/config.yml рядом
+├── docker-compose.portable.yml  # любой хост (Linux/Windows/macOS): образ + переменные
+├── docker-compose.build.yml     # сборка из server/ (для Portainer с развёртыванием из git)
+├── .env.example                 # значения стека для portable-варианта
+├── install.ps1                  # установка на Windows одной командой
+├── README-portable.md           # инструкция: Docker Desktop, Dockge, Portainer
+└── README.md                    # этот файл
 ```
 
 Сборка идёт из каталога `../server`: исходники приложения лежат в этом же
@@ -21,6 +29,17 @@ deploy/
 HTTPS-прокси), остальное берётся из значений по умолчанию. Сеть — `network_mode: host`:
 контейнер слушает порты прямо на сервере, поэтому на роутере открывается только
 `public_port`.
+
+Для установки не на Linux-сервере (Docker Desktop на Windows/macOS, панели
+управления стеками, запуск одной командой) есть универсальный комплект:
+[`docker-compose.portable.yml`](docker-compose.portable.yml) — тот же образ и те
+же переменные, но порты публикуются (`ports`), а не берутся из сети хоста;
+[`docker-compose.build.yml`](docker-compose.build.yml) — сборка образа из
+`../server` на хосте (нужна, когда готовый образ недоступен: Portainer с
+развёртыванием из git, сервер без интернета); [`install.ps1`](install.ps1) —
+установка на Windows одной командой; [`README-portable.md`](README-portable.md) —
+пошаговая инструкция. Данные при смене способа запуска не теряются: том у всех
+стеков один и тот же — `sunduk_data`.
 
 ## Установка
 

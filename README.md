@@ -273,6 +273,8 @@ docker compose up -d --build
 
 Каталог `deploy/` — готовый комплект: compose-файл с фиксированными портами,
 боевой `config/config.yml`, `install.sh` и инструкция `deploy/README.md`.
+Там же стеки для панелей управления и для установки на любую ОС (Docker Desktop,
+Windows, macOS) — см. [`deploy/README-portable.md`](deploy/README-portable.md).
 Собирается из `server/` этого же репозитория (клонируйте его целиком) либо из
 готового образа `sunduk-*.tar`:
 
@@ -346,7 +348,7 @@ files.example.com {
 sunduk/
 ├── docker-compose.yml       # панель 8080, ссылки 8081, монтаж сервера в /host
 ├── config/config.yml        # настройки (переменные окружения важнее)
-├── deploy/                  # боевой комплект для сервера (compose, install.sh, README)
+├── deploy/                  # боевой комплект: стеки (сервер, панели, любая ОС), install.sh/install.ps1, README
 ├── demo-data/               # готовые файлы для проверки интерфейса (files/media/photo)
 └── server/
     ├── Dockerfile           # python:3.12-slim

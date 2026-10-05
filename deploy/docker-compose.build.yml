@@ -1,0 +1,79 @@
+# =============================================================================
+#  Сундук — стек «из исходников»: сборка образа на том же хосте.
+#
+#  Нужен там, где нет доступа к готовому образу: приватный пакет GHCR, сервер
+#  без интернета, свой код. Исходники лежат в этом же репозитории, поэтому файл
+#  лежит в deploy/, а каталог server/ — на уровень выше.
+#
+#  Как разворачивают:
+#    Portainer -> Stacks -> Add stack -> Repository
+#        Repository URL : https://github.com/afanagr/sunduk   (или ваш форк)
+#        Compose path   : deploy/docker-compose.build.yml
+#        (Portainer сам склонирует репозиторий и соберёт образ на хосте; ни
+#         registry-логина, ни GHCR не требуется. Ветку можно указать в поле
+#         Repository reference, например main или тег v1.1.2.)
+#    Обычный сервер:  git clone ... && cd sunduk &&
+#                     docker compose -f deploy/docker-compose.build.yml up -d --build
+#
+#  Dockge не клонирует репозиторий, поэтому копировать этот файл в каталог стека
+#  нельзя: контекст сборки ../server там не найдётся. Соберите образ из клона
+#  (docker compose -f deploy/docker-compose.build.yml build) и укажите в
+#  docker-compose.portable.yml переменную SUNDUK_IMAGE=sunduk:latest.
+#
+#  После сборки образ получает имя sunduk:latest, поэтому стеки
+#  docker-compose.portable.yml (SUNDUK_IMAGE=sunduk:latest) и корневой
+#  docker-compose.yml работают с ним без интернета.
+#
+#  Переменные — те же, что у docker-compose.portable.yml (ADMIN_PORT,
+#  PUBLIC_PORT, PUBLIC_ADDRESS, HOST_ROOT, LAN_ALLOWLIST, CONTAINER_NAME,
+#  DATA_VOLUME); разница только в источнике образа.
+# =============================================================================
+name: sunduk
+
+services:
+  sunduk:
+    build:
+      # Контекст сборки — каталог server этого же репозитория (deploy/ лежит на
+      # уровень ниже корня, поэтому путь начинается с ../).
+      context: ../server
+      dockerfile: Dockerfile
+    image: "${SUNDUK_IMAGE:-sunduk:latest}"
+    container_name: "${CONTAINER_NAME:-sunduk}"
+    restart: unless-stopped
+
+    ports:
+      - "${ADMIN_PORT:-8080}:${ADMIN_PORT:-8080}"
+      - "${PUBLIC_PORT:-8081}:${PUBLIC_PORT:-8081}"
+
+    environment:
+      admin_port: "${ADMIN_PORT:-8080}"
+      public_port: "${PUBLIC_PORT:-8081}"
+      public_address: "${PUBLIC_ADDRESS:-localhost}"
+      lan_allowlist: "${LAN_ALLOWLIST:-}"
+      host_root: /host
+
+    volumes:
+      - "${HOST_ROOT:-/}:/host:rw"
+      - sunduk_data:/data
+
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  sunduk_data:
+    name: "${DATA_VOLUME:-sunduk_data}"
